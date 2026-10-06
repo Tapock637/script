@@ -15,7 +15,6 @@ if not LocalPlayer then
     LocalPlayer = Players.LocalPlayer
 end
 
--- ===== CONFIG =====
 local CONFIG = {
     ScanInterval = 1.0,
     MaxDistance = 0,
@@ -34,18 +33,6 @@ local CONFIG = {
     Team = "Marines",
 }
 
--- ===== СПИСОК ФРУКТОВ И ИХ КОДОВ =====
-local FRUIT_NAMES = {
-    "Rocket", "Spin", "Chop", "Spring", "Bomb", "Smoke", "Spike",
-    "Flame", "Ice", "Sand", "Dark", "Eagle", "Diamond", "Light",
-    "Rubber", "Ghost", "Magma", "Quake", "Buddha", "Love", "Creation",
-    "Spider", "Sound", "Phoenix", "Portal", "Lightning", "Pain", "Blizzard",
-    "Gravity", "Mammoth", "T-Rex", "Dough", "Shadow", "Venom", "Gas",
-    "Spirit", "Tiger", "Yeti", "Magnet", "Kitsune", "Control", "Dragon",
-    "Leopard", "Rumble", "Revive", "Barrier", "Paw"
-}
-
--- Таблица кодов для сохранения (на основе открытых исходников)
 local FRUIT_CODES = {
     ["Rocket Fruit"] = "Rocket-Rocket",
     ["Spin Fruit"] = "Spin-Spin",
@@ -107,7 +94,6 @@ local RunThread = nil
 local CafeThread = nil
 local AutoThread = nil
 
--- ===== CONFIG LOAD/SAVE =====
 local function loadConfig()
     if not (isfile and readfile) then return end
     local ok, data = pcall(function()
@@ -132,7 +118,6 @@ local function saveConfig()
     end)
 end
 
--- ===== ВЫБОР КОМАНДЫ =====
 local function selectTeam()
     local playerGui = LocalPlayer:WaitForChild("PlayerGui", 5)
     if not playerGui then return end
@@ -154,20 +139,9 @@ local function selectTeam()
     end
 end
 
--- ===== ПОИСК ФРУКТОВ (ESP) =====
-local function BuildLookup()
-    local set = {}
-    for _, name in ipairs(FRUIT_NAMES) do
-        set[name:lower()] = true
-    end
-    return set
-end
-
-local FruitLookup = BuildLookup()
-
 local function HasFruitName(str)
     if type(str) ~= "string" then return false end
-    return FruitLookup[str:lower()] == true
+    return str:lower():find("fruit", 1, true) ~= nil
 end
 
 local function IsNpc(inst)
@@ -288,7 +262,6 @@ local function ScanFruits()
     end
 end
 
--- ===== PLAYER ESP =====
 local function ApplyPlayerESP(player, isLocal)
     if PlayerESP[player] then
         if PlayerESP[player].Gui then PlayerESP[player].Gui:Destroy() end
@@ -328,7 +301,6 @@ local function ApplyPlayerESP(player, isLocal)
     end)
 end
 
--- ===== HELPERS =====
 local function GetMyPosition()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
@@ -415,11 +387,6 @@ local function FindCafePosition()
     return nil
 end
 
--- ===== STORE FRUIT (ИСПРАВЛЕНО) =====
-local function GetFruitCode(fruitName)
-    return FRUIT_CODES[fruitName]
-end
-
 local function TryStoreFruit()
     local char = LocalPlayer.Character
     if not char then return false, "No character" end
@@ -428,14 +395,12 @@ local function TryStoreFruit()
     if not backpack then return false, "No backpack" end
 
     local fruitTool = nil
-    -- Ищем в руках
     for _, child in ipairs(char:GetChildren()) do
         if child:IsA("Tool") and HasFruitName(child.Name) then
             fruitTool = child
             break
         end
     end
-    -- Ищем в рюкзаке
     if not fruitTool then
         for _, child in ipairs(backpack:GetChildren()) do
             if child:IsA("Tool") and HasFruitName(child.Name) then
@@ -453,7 +418,7 @@ local function TryStoreFruit()
     local commF = remotes and remotes:FindFirstChild("CommF_")
     if not commF then return false, "No CommF_" end
 
-    local fruitCode = GetFruitCode(fruitTool.Name)
+    local fruitCode = FRUIT_CODES[fruitTool.Name]
     if not fruitCode then
         return false, "Unknown fruit code for " .. fruitTool.Name
     end
@@ -468,14 +433,12 @@ local function TryStoreFruit()
     return false, "Store failed for " .. fruitTool.Name
 end
 
--- ===== SERVER HOP =====
 local function ServerHop()
     pcall(function()
         TeleportService:TeleportToPlaceInstance(CONFIG.PlaceId, game.JobId, LocalPlayer)
     end)
 end
 
--- ===== FLY =====
 local function StopFly()
     FlyActive = false
     if FlyConnection then
@@ -547,7 +510,6 @@ local function StartFly()
     end)
 end
 
--- ===== LEGIT RUN (Pathfinding) =====
 local function StopRun()
     RunActive = false
     if RunThread then
@@ -648,7 +610,6 @@ local function StartRun()
     end)
 end
 
--- ===== CAFE WALK =====
 local function StopCafeWalk()
     CafeWalkActive = false
     if CafeThread then
@@ -751,7 +712,6 @@ local function StartCafeWalk()
     end)
 end
 
--- ===== AUTO FRUIT =====
 local function StopAutoFruit()
     AutoFruitActive = false
     if AutoThread then
@@ -802,7 +762,6 @@ local function StartAutoFruit()
     end)
 end
 
--- ===== UI =====
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "FruitESP_UI"
 screenGui.ResetOnSpawn = false
@@ -1125,7 +1084,6 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- ===== INIT =====
 loadConfig()
 refreshAllButtons()
 
