@@ -4,7 +4,6 @@ local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
-local PathfindingService = game:GetService("PathfindingService")
 
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then
@@ -343,8 +342,6 @@ local function notify(text, color)
     end)
 end
 
--- ================= FLY TO FRUIT =================
-
 local function StopFly()
     FlyActive = false
     if FlyConnection then
@@ -379,16 +376,10 @@ local function StartFly()
         end
 
         local c = LocalPlayer.Character
-        if not c then
-            StopFly()
-            return
-        end
+        if not c then StopFly() return end
 
         local currentHrp = c:FindFirstChild("HumanoidRootPart")
-        if not currentHrp then
-            StopFly()
-            return
-        end
+        if not currentHrp then StopFly() return end
 
         if not target.Parent then
             target = GetNearestFruit()
@@ -415,8 +406,6 @@ local function StartFly()
         currentHrp.Velocity = Vector3.new(0, 0, 0)
     end)
 end
-
--- ================= LEGIT RUN =================
 
 local function StopRun()
     RunActive = false
@@ -509,23 +498,9 @@ local function StartRun()
 
         local shouldJump = false
 
-        if wallBlocked then
-            shouldJump = true
-        end
-
-        if voidAhead then
-            if now - lastJump >= 1 then
-                shouldJump = true
-            end
-        end
-
-        if jumpSpam then
-            if now < spamUntil then
-                shouldJump = true
-            else
-                jumpSpam = false
-            end
-        end
+        if wallBlocked then shouldJump = true end
+        if voidAhead and (now - lastJump >= 1) then shouldJump = true end
+        if jumpSpam and now < spamUntil then shouldJump = true else jumpSpam = false end
 
         if shouldJump then
             currentHum.Jump = true
@@ -533,8 +508,6 @@ local function StartRun()
         end
     end)
 end
-
--- ================= CAFE WALK =================
 
 local function StopCafeWalk()
     CafeWalkActive = false
@@ -568,84 +541,69 @@ local function StartCafeWalk()
     end
 
     CafeWalkActive = true
+    local lastJump = 0
 
-    local path = PathfindingService:CreatePath({
-        AgentRadius = 2,
-        AgentHeight = 5,
-        AgentCanJump = true,
-        AgentCanClimb = true,
-        WaypointSpacing = 4,
-    })
-
-    local function attemptPath()
-        local success, err = pcall(function()
-            path:ComputeAsync(hrp.Position, cafePart.Position)
-        end)
-
-        if not success or path.Status ~= Enum.PathStatus.Success then
-            return false
-        end
-        return true
-    end
-
-    local function followPath()
-        if not CafeWalkActive then return end
-
-        local computed = attemptPath()
-        if not computed then
-            task.wait(0.5)
-            computed = attemptPath()
-        end
-
-        if not computed then
-            notify("PATH FAILED", Color3.fromRGB(255, 160, 60))
-            StopCafeWalk()
+    CafeConnection = RunService.Heartbeat:Connect(function(dt)
+        if not CafeWalkActive then
+            if CafeConnection then CafeConnection:Disconnect() end
             return
         end
 
-        local waypoints = path:GetWaypoints()
-        for i, wp in ipairs(waypoints) do
-            if not CafeWalkActive then return end
+        local c = LocalPlayer.Character
+        if not c then StopCafeWalk() return end
 
-            if wp.Action == Enum.PathWaypointAction.Jump then
-                hum.Jump = true
+        local currentHrp = c:FindFirstChild("HumanoidRootPart")
+        local currentHum = c:FindFirstChildOfClass("Humanoid")
+        if not currentHrp or not currentHum then StopCafeWalk() return end
+
+        if not cafePart or not cafePart.Parent then
+            cafePart = FindCafePosition()
+            if not cafePart then
+                StopCafeWalk()
+                notify("CAFE LOST", Color3.fromRGB(255, 160, 60))
+                return
             end
-
-            hum:MoveTo(wp.Position)
-            local reached = false
-            local timeout = tick() + 5
-
-            repeat
-                task.wait(0.1)
-                local dist = (hrp.Position - wp.Position).Magnitude
-                if dist < 3 then
-                    reached = true
-                end
-                if tick() > timeout then
-                    reached = true
-                end
-                if not CafeWalkActive then return end
-            until reached
         end
 
-        hum:MoveTo(cafePart.Position)
-        local finalTimeout = tick() + 5
-        repeat
-            task.wait(0.1)
-            local dist = (hrp.Position - cafePart.Position).Magnitude
-            if dist < 5 then break end
-            if tick() > finalTimeout then break end
-            if not CafeWalkActive then return end
-        until false
+        local targetPos = cafePart.Position
+        local myPos = currentHrp.Position
+        local dir = (targetPos - myPos)
 
-        StopCafeWalk()
-        notify("ARRIVED AT CAFE", Color3.fromRGB(100, 255, 120))
-    end
+        if dir.Magnitude <= 6 then
+            StopCafeWalk()
+            notify("ARRIVED AT CAFE", Color3.fromRGB(100, 255, 120))
+            return
+        end
 
-    task.spawn(followPath)
+        local now = tick()
+        local flatDir = Vector3.new(dir.X, 0, dir.Z)
+
+        if flatDir.Magnitude > 0 then
+            flatDir = flatDir.Unit
+            local move = flatDir * currentHum.WalkSpeed * dt
+            currentHrp.CFrame = currentHrp.CFrame + move
+        end
+
+        local rayOrigin = currentHrp.Position
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        rayParams.FilterDescendantsInstances = {c}
+
+        local downRay = workspace:Raycast(rayOrigin, Vector3.new(0, -10, 0), rayParams)
+        local voidAhead = downRay == nil
+
+        local shouldJump = false
+
+        if voidAhead and (now - lastJump >= 1) then
+            shouldJump = true
+        end
+
+        if shouldJump then
+            currentHum.Jump = true
+            lastJump = now
+        end
+    end)
 end
-
--- ================= UI =================
 
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "Main"
@@ -816,29 +774,17 @@ playerBtn.MouseButton1Click:Connect(function()
 end)
 
 flyBtn.MouseButton1Click:Connect(function()
-    if FlyActive then
-        StopFly()
-    else
-        StartFly()
-    end
+    if FlyActive then StopFly() else StartFly() end
     refreshAllButtons()
 end)
 
 runBtn.MouseButton1Click:Connect(function()
-    if RunActive then
-        StopRun()
-    else
-        StartRun()
-    end
+    if RunActive then StopRun() else StartRun() end
     refreshAllButtons()
 end)
 
 cafeBtn.MouseButton1Click:Connect(function()
-    if CafeWalkActive then
-        StopCafeWalk()
-    else
-        StartCafeWalk()
-    end
+    if CafeWalkActive then StopCafeWalk() else StartCafeWalk() end
     refreshAllButtons()
 end)
 
@@ -872,11 +818,7 @@ local function closeMenu()
 end
 
 toggleBtn.MouseButton1Click:Connect(function()
-    if mainFrame.Visible then
-        closeMenu()
-    else
-        openMenu()
-    end
+    if mainFrame.Visible then closeMenu() else openMenu() end
 end)
 
 closeBtn.MouseButton1Click:Connect(function()
