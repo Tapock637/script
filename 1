@@ -463,7 +463,23 @@ end
 
 local function ServerHop()
     pcall(function()
-        TeleportService:TeleportToPlaceInstance(CONFIG.PlaceId, game.JobId, LocalPlayer)
+        local url = "https://games.roblox.com/v1/games/" .. CONFIG.PlaceId .. "/servers/Public?limit=100"
+        local response = game:HttpGet(url)
+        local data = HttpService:JSONDecode(response)
+
+        local servers = {}
+        for _, server in ipairs(data.data) do
+            if server.id ~= game.JobId and server.playing < server.maxPlayers then
+                table.insert(servers, server.id)
+            end
+        end
+
+        if #servers > 0 then
+            local randomServer = servers[math.random(1, #servers)]
+            TeleportService:TeleportToPlaceInstance(CONFIG.PlaceId, randomServer, LocalPlayer)
+        else
+            TeleportService:Teleport(CONFIG.PlaceId, LocalPlayer)
+        end
     end)
 end
 
