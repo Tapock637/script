@@ -40,6 +40,7 @@ local State = {
 
 local Tracked = {}
 local PlayerESP = {}
+local HandFruits = {}
 
 local FlyActive = false
 local RunActive = false
@@ -175,6 +176,78 @@ local function ScanFruits()
             TryTrackFruit(inst)
         end
     end
+end
+
+-- ================= ФРУКТ В РУКАХ =================
+
+local function ClearHandFruit(inst)
+    local data = HandFruits[inst]
+    if not data then return end
+    if data.Gui then data.Gui:Destroy() end
+    if data.Highlight then data.Highlight:Destroy() end
+    HandFruits[inst] = nil
+end
+
+local function TryTrackHandFruit(inst)
+    if HandFruits[inst] then return end
+    if not inst:IsA("Tool") then return end
+    if not HasFruitName(inst.Name) then return end
+
+    local adornee = inst:FindFirstChild("Handle")
+    if not adornee or not adornee:IsA("BasePart") then
+        adornee = inst:FindFirstChildWhichIsA("BasePart", true)
+    end
+    if not adornee then return end
+
+    local name = inst.Name .. " [HAND]"
+    local bb, label = CreateBillboard(adornee, name, CONFIG.FruitColor, UDim2.new(0, 260, 0, 40))
+    local hl = CreateOutline(adornee, CONFIG.FruitColor)
+
+    HandFruits[inst] = {
+        Gui = bb,
+        Label = label,
+        Highlight = hl,
+        Adornee = adornee,
+        Name = name,
+    }
+end
+
+local function ScanHandFruits()
+    for _, player in ipairs(Players:GetPlayers()) do
+        local char = player.Character
+        if char then
+            for _, child in ipairs(char:GetChildren()) do
+                if child:IsA("Tool") then
+                    TryTrackHandFruit(child)
+                end
+            end
+        end
+    end
+end
+
+local function WatchPlayerHands(player)
+    local function onChar(char)
+        char.ChildAdded:Connect(function(child)
+            if child:IsA("Tool") then
+                task.defer(TryTrackHandFruit, child)
+            end
+        end)
+        char.ChildRemoved:Connect(function(child)
+            if child:IsA("Tool") then
+                ClearHandFruit(child)
+            end
+        end)
+        for _, child in ipairs(char:GetChildren()) do
+            if child:IsA("Tool") then
+                task.defer(TryTrackHandFruit, child)
+            end
+        end
+    end
+
+    if player.Character then
+        onChar(player.Character)
+    end
+    player.CharacterAdded:Connect(onChar)
 end
 
 local function ApplyPlayerESP(player, isLocal)
@@ -752,6 +825,10 @@ local function setFruitVisibility(v)
         if data.Gui then data.Gui.Enabled = v end
         if data.Highlight then data.Highlight.Enabled = v end
     end
+    for _, data in pairs(HandFruits) do
+        if data.Gui then data.Gui.Enabled = v end
+        if data.Highlight then data.Highlight.Enabled = v end
+    end
 end
 
 local function setPlayerVisibility(v)
@@ -873,11 +950,15 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
+-- ================= ЗАПУСК =================
+
 ScanFruits()
+ScanHandFruits()
 
 task.spawn(function()
     while task.wait(CONFIG.ScanInterval) do
         ScanFruits()
+        ScanHandFruits()
     end
 end)
 
@@ -895,10 +976,12 @@ end)
 
 for _, player in ipairs(Players:GetPlayers()) do
     ApplyPlayerESP(player, player == LocalPlayer)
+    WatchPlayerHands(player)
 end
 
 Players.PlayerAdded:Connect(function(player)
     ApplyPlayerESP(player, false)
+    WatchPlayerHands(player)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
@@ -917,6 +1000,36 @@ RunService.RenderStepped:Connect(function()
     for inst, data in pairs(Tracked) do
         if not inst.Parent or not data.Adornee or not data.Adornee.Parent then
             RemoveFruit(inst)
+            continue
+        end
+
+        local dist = (data.Adornee.Position - myPos).Magnitude
+
+        if CONFIG.MinDistance > 0 and dist < CONFIG.MinDistance then
+            data.Gui.Enabled = false
+            if data.Highlight then data.Highlight.Enabled = false end
+        elseif CONFIG.MaxDistance > 0 and dist > CONFIG.MaxDistance then
+            data.Gui.Enabled = false
+            if data.Highlight then data.Highlight.Enabled = false end
+        else
+            if State.ShowFruits then
+                data.Gui.Enabled = true
+                if data.Highlight then data.Highlight.Enabled = true end
+                if CONFIG.ShowDistance then
+                    data.Label.Text = string.format("%s\n[%d studs]", data.Name, math.floor(dist))
+                else
+                    data.Label.Text = data.Name
+                end
+            else
+                data.Gui.Enabled = false
+                if data.Highlight then data.Highlight.Enabled = false end
+            end
+        end
+    end
+
+    for inst, data in pairs(HandFruits) do
+        if not inst.Parent or not data.Adornee or not data.Adornee.Parent then
+            ClearHandFruit(inst)
             continue
         end
 
@@ -983,6 +1096,12 @@ task.spawn(function()
     for _ in pairs(Tracked) do
         found = true
         break
+    end
+    if not found then
+        for _ in pairs(HandFruits) do
+            found = true
+            break
+        end
     end
     if found then
         notify("FRUIT FOUND", CONFIG.FruitColor)
