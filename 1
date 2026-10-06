@@ -55,7 +55,8 @@ local FRUIT_CODES = {
 local EXCLUDE = {
     "gacha","dealer","shop","stand","vendor","npc","pedestal","display",
     "clone","effect","particle","aura","trail","island","portal","door",
-    "statue","sign",
+    "statue","sign","masterfruityors","mastery","fruityors","fruityor",
+    "fruitmachine","fruitvendor","fruitdealer","fruitstand",
 }
 
 local State = { AutoFruit = false }
@@ -269,12 +270,13 @@ end
 local function UnequipAllTools()
     local char = LocalPlayer.Character
     if not char then return end
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hum then return end
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return end
     for _, child in ipairs(char:GetChildren()) do
         if child:IsA("Tool") then
-            hum:UnequipTools()
-            break
+            pcall(function()
+                child.Parent = backpack
+            end)
         end
     end
 end
@@ -675,7 +677,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- АВТО-СТОР: снимает всё из рук, затем сохраняет
+-- АВТО-СТОР + снятие из рук
 task.spawn(function()
     while task.wait(0.5) do
         local char = LocalPlayer.Character
@@ -683,10 +685,8 @@ task.spawn(function()
         local backpack = LocalPlayer:FindFirstChild("Backpack")
         if not backpack then continue end
 
-        -- 1. Снимаем всё из рук, чтобы ESP не видел фрукт в руке
         UnequipAllTools()
 
-        -- 2. Ищем любой Tool с фруктом и сохраняем
         local candidates = {}
         for _, child in ipairs(char:GetChildren()) do
             if child:IsA("Tool") then table.insert(candidates, child) end
@@ -708,7 +708,7 @@ task.spawn(function()
                 end
             end
 
-            if isFruit then
+            if isFruit and not HasExcluded(tool.Name) then
                 TryStoreFruit()
                 break
             end
