@@ -77,6 +77,22 @@ local FRUIT_CODES = {
     ["Kitsune Fruit"] = "Kitsune-Kitsune",
 }
 
+local EXCLUDE_KEYWORDS = {
+    "gacha",
+    "dealer",
+    "shop",
+    "stand",
+    "vendor",
+    "npc",
+    "pedestal",
+    "display",
+    "clone",
+    "effect",
+    "particle",
+    "aura",
+    "trail",
+}
+
 local State = {
     ShowFruits = true,
     ShowPlayers = false,
@@ -139,6 +155,17 @@ local function selectTeam()
     end
 end
 
+local function HasExcludedKeyword(str)
+    if type(str) ~= "string" then return false end
+    local lower = str:lower()
+    for _, kw in ipairs(EXCLUDE_KEYWORDS) do
+        if lower:find(kw, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
 local function HasFruitName(str)
     if type(str) ~= "string" then return false end
     return str:lower():find("fruit", 1, true) ~= nil
@@ -153,6 +180,7 @@ end
 local function IsFruitRelated(inst)
     if IsNpc(inst) then return false end
     if not (inst:IsA("Tool") or inst:IsA("Model")) then return false end
+    if HasExcludedKeyword(inst.Name) then return false end
     if not HasFruitName(inst.Name) then return false end
     if inst:IsA("Model") then
         local hasPart = inst:FindFirstChildWhichIsA("BasePart", true)
@@ -396,14 +424,14 @@ local function TryStoreFruit()
 
     local fruitTool = nil
     for _, child in ipairs(char:GetChildren()) do
-        if child:IsA("Tool") and HasFruitName(child.Name) then
+        if child:IsA("Tool") and HasFruitName(child.Name) and not HasExcludedKeyword(child.Name) then
             fruitTool = child
             break
         end
     end
     if not fruitTool then
         for _, child in ipairs(backpack:GetChildren()) do
-            if child:IsA("Tool") and HasFruitName(child.Name) then
+            if child:IsA("Tool") and HasFruitName(child.Name) and not HasExcludedKeyword(child.Name) then
                 fruitTool = child
                 break
             end
