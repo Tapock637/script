@@ -15,6 +15,7 @@ if not LocalPlayer then
     LocalPlayer = Players.LocalPlayer
 end
 
+-- ===== CONFIG =====
 local CONFIG = {
     ScanInterval = 1.0,
     MaxDistance = 0,
@@ -24,7 +25,7 @@ local CONFIG = {
     FruitColor = Color3.fromRGB(255, 60, 60),
     PlayerColor = Color3.fromRGB(60, 140, 255),
     MyColor = Color3.fromRGB(0, 200, 255),
-    MaxSize = 8,
+    MaxSize = 12, -- Увеличил, т.к. некоторые фрукты крупные
     CafeKeywords = {"cafe", "café", "rose", "kingdom"},
     ConfigFile = "fruit_esp_config.json",
     PlaceId = 2753915549,
@@ -33,6 +34,7 @@ local CONFIG = {
     Team = "Marines",
 }
 
+-- ===== ТОЧНЫЙ СПИСОК ФРУКТОВ (для Store) =====
 local FRUIT_CODES = {
     ["Rocket Fruit"] = "Rocket-Rocket",
     ["Spin Fruit"] = "Spin-Spin",
@@ -77,10 +79,11 @@ local FRUIT_CODES = {
     ["Kitsune Fruit"] = "Kitsune-Kitsune",
 }
 
+-- ===== ИСКЛЮЧЕНИЯ (ЧТО НЕ СЧИТАТЬ ФРУКТОМ) =====
 local EXCLUDE_KEYWORDS = {
     "gacha", "dealer", "shop", "stand", "vendor", "npc",
     "pedestal", "display", "clone", "effect", "particle",
-    "aura", "trail",
+    "aura", "trail", "island", "portal", "door", "statue", "sign",
 }
 
 local State = {
@@ -100,6 +103,7 @@ local RunThread = nil
 local CafeThread = nil
 local AutoThread = nil
 
+-- ===== ЗАГРУЗКА/СОХРАНЕНИЕ КОНФИГА =====
 local function loadConfig()
     if not (isfile and readfile) then return end
     local ok, data = pcall(function()
@@ -124,6 +128,7 @@ local function saveConfig()
     end)
 end
 
+-- ===== ПРОВЕРКА КОМАНДЫ =====
 local function IsTeamSelected()
     if LocalPlayer.Team ~= nil and LocalPlayer.Team.Name ~= "" then
         return true
@@ -142,7 +147,7 @@ local function selectTeam()
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
     local commF = remotes and remotes:FindFirstChild("CommF_")
     if not commF then
-        notify("CommF_ not found", Color3.fromRGB(255, 100, 100))
+        notify("CommF_ not found!", Color3.fromRGB(255, 100, 100))
         return false
     end
     local ok, result = pcall(function()
@@ -154,6 +159,7 @@ local function selectTeam()
     return false
 end
 
+-- ===== ФИЛЬТРЫ ДЛЯ ПОИСКА ФРУКТОВ =====
 local function HasExcludedKeyword(str)
     if type(str) ~= "string" then return false end
     local lower = str:lower()
@@ -165,14 +171,16 @@ local function HasExcludedKeyword(str)
     return false
 end
 
-local function HasFruitName(str)
+-- Ищем слово "Fruit" в имени, но исключаем мусор
+local function IsFruitName(str)
     if type(str) ~= "string" then return false end
-    for name, _ in pairs(FRUIT_CODES) do
-        if str:lower() == name:lower() then
-            return true
-        end
-    end
-    return false
+    local lower = str:lower()
+    if not lower:find("fruit", 1, true) then return false end
+    if HasExcludedKeyword(str) then return false end
+    -- Исключаем просто "Fruit" или "1 Fruit" и т.п.
+    local cleaned = lower:gsub("fruit", ""):gsub("%s+", "")
+    if cleaned == "" or cleaned:match("^%d+$") then return false end
+    return true
 end
 
 local function IsNpc(inst)
@@ -184,8 +192,8 @@ end
 local function IsFruitRelated(inst)
     if IsNpc(inst) then return false end
     if not (inst:IsA("Tool") or inst:IsA("Model")) then return false end
-    if HasExcludedKeyword(inst.Name) then return false end
-    if not HasFruitName(inst.Name) then return false end
+    if not IsFruitName(inst.Name) then return false end
+    -- Проверяем, что у модели есть реальная часть
     if inst:IsA("Model") then
         local hasPart = inst:FindFirstChildWhichIsA("BasePart", true)
         if not hasPart then return false end
@@ -193,6 +201,7 @@ local function IsFruitRelated(inst)
     return true
 end
 
+-- ===== ПОЛУЧЕНИЕ РАЗМЕРА И АДРЕСАТА =====
 local function GetSize(adornee)
     if adornee:IsA("BasePart") then
         local s = adornee.Size
@@ -218,6 +227,7 @@ local function GetAdornee(inst)
     return nil
 end
 
+-- ===== СОЗДАНИЕ ESP =====
 local function CreateBillboard(adornee, text, color, size)
     local bb = Instance.new("BillboardGui")
     bb.Name = "FruitESP"
@@ -229,6 +239,7 @@ local function CreateBillboard(adornee, text, color, size)
     bb.MaxDistance = CONFIG.MaxDistance
     bb.ResetOnSpawn = false
     bb.Parent = adornee
+
     local label = Instance.new("TextLabel")
     label.Name = "Label"
     label.BackgroundTransparency = 1
@@ -239,6 +250,7 @@ local function CreateBillboard(adornee, text, color, size)
     label.TextStrokeTransparency = 1
     label.Text = text
     label.Parent = bb
+
     return bb, label
 end
 
@@ -262,9 +274,11 @@ local function TryTrackFruit(inst)
     if not adornee then return end
     local size = GetSize(adornee)
     if size and size > CONFIG.MaxSize then return end
+
     local name = inst.Name
     local bb, label = CreateBillboard(adornee, name, CONFIG.FruitColor)
     local hl = CreateOutline(adornee, CONFIG.FruitColor)
+
     Tracked[inst] = {
         Gui = bb,
         Label = label,
@@ -290,22 +304,27 @@ local function ScanFruits()
     end
 end
 
+-- ===== ESP ДЛЯ ИГРОКОВ =====
 local function ApplyPlayerESP(player, isLocal)
     if PlayerESP[player] then
         if PlayerESP[player].Gui then PlayerESP[player].Gui:Destroy() end
         if PlayerESP[player].Highlight then PlayerESP[player].Highlight:Destroy() end
         PlayerESP[player] = nil
     end
+
     local function setupCharacter(char)
         if char:FindFirstChild("FruitESP") then return end
         local head = char:WaitForChild("Head", 5)
         local hrp = char:WaitForChild("HumanoidRootPart", 5)
         if not head or not hrp then return end
+
         local color = isLocal and CONFIG.MyColor or CONFIG.PlayerColor
         local prefix = isLocal and "[YOU] " or ""
         local text = prefix .. player.Name
+
         local bb, label = CreateBillboard(head, text, color, UDim2.new(0, 260, 0, 44))
         local hl = CreateOutline(char, color)
+
         PlayerESP[player] = {
             Gui = bb,
             Label = label,
@@ -314,15 +333,18 @@ local function ApplyPlayerESP(player, isLocal)
             BaseText = text,
         }
     end
+
     if player.Character then
         setupCharacter(player.Character)
     end
+
     player.CharacterAdded:Connect(function(char)
         task.wait(0.5)
         setupCharacter(char)
     end)
 end
 
+-- ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
 local function GetMyPosition()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
@@ -334,8 +356,10 @@ end
 local function GetNearestFruit()
     local myPos = GetMyPosition()
     if not myPos then return nil end
+
     local nearest = nil
     local nearestDist = math.huge
+
     for inst, data in pairs(Tracked) do
         if inst.Parent and data.Adornee and data.Adornee.Parent then
             local dist = (data.Adornee.Position - myPos).Magnitude
@@ -345,6 +369,7 @@ local function GetNearestFruit()
             end
         end
     end
+
     return nearest
 end
 
@@ -362,6 +387,7 @@ local function FindCafePosition()
     local bestDist = math.huge
     local myPos = GetMyPosition()
     if not myPos then return nil end
+
     for _, inst in ipairs(Workspace:GetDescendants()) do
         if inst:IsA("BasePart") or inst:IsA("Model") then
             local name = inst.Name:lower()
@@ -394,6 +420,7 @@ local function FindCafePosition()
             end
         end
     end
+
     if best then
         if best:IsA("BasePart") then return best
         elseif best:IsA("Model") then
@@ -404,57 +431,70 @@ local function FindCafePosition()
     return nil
 end
 
+-- ===== СОХРАНЕНИЕ ФРУКТА (STORE) =====
 local function TryStoreFruit()
     local char = LocalPlayer.Character
     if not char then return false, "No character" end
+
     local backpack = LocalPlayer:FindFirstChild("Backpack")
     if not backpack then return false, "No backpack" end
+
     local fruitTool = nil
+    -- Ищем в руках
     for _, child in ipairs(char:GetChildren()) do
-        if child:IsA("Tool") and HasFruitName(child.Name) then
+        if child:IsA("Tool") and IsFruitName(child.Name) then
             fruitTool = child
             break
         end
     end
+    -- Ищем в рюкзаке
     if not fruitTool then
         for _, child in ipairs(backpack:GetChildren()) do
-            if child:IsA("Tool") and HasFruitName(child.Name) then
+            if child:IsA("Tool") and IsFruitName(child.Name) then
                 fruitTool = child
                 break
             end
         end
     end
+
     if not fruitTool then
         return false, "No fruit in hand or backpack"
     end
+
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
     local commF = remotes and remotes:FindFirstChild("CommF_")
     if not commF then return false, "No CommF_" end
+
     local fruitCode = FRUIT_CODES[fruitTool.Name]
     if not fruitCode then
         local baseName = fruitTool.Name:gsub(" Fruit", "")
         fruitCode = baseName .. "-" .. baseName
     end
+
     local ok, result = pcall(function()
         return commF:InvokeServer("StoreFruit", fruitCode, fruitTool)
     end)
+
     if ok and result then
         return true, "Stored " .. fruitTool.Name
     end
     return false, "Store failed for " .. fruitTool.Name
 end
 
+-- ===== SERVER HOP =====
 local function ServerHop()
     pcall(function()
         local url = "https://games.roblox.com/v1/games/" .. CONFIG.PlaceId .. "/servers/Public?limit=100"
         local response = game:HttpGet(url)
         local data = HttpService:JSONDecode(response)
+
         local servers = {}
         for _, server in ipairs(data.data) do
             if server.id ~= game.JobId and server.playing < server.maxPlayers then
                 table.insert(servers, server.id)
             end
         end
+
         if #servers > 0 then
             local randomServer = servers[math.random(1, #servers)]
             TeleportService:TeleportToPlaceInstance(CONFIG.PlaceId, randomServer, LocalPlayer)
@@ -464,6 +504,7 @@ local function ServerHop()
     end)
 end
 
+-- ===== КОЛЛИЗИЯ =====
 local function SetCharacterCollision(enabled)
     local char = LocalPlayer.Character
     if not char then return end
@@ -474,6 +515,7 @@ local function SetCharacterCollision(enabled)
     end
 end
 
+-- ===== ПОЛЁТ =====
 local function StopFly()
     FlyActive = false
     if FlyConnection then
@@ -485,29 +527,38 @@ end
 
 local function StartFly()
     if FlyActive then return end
+
     local char = LocalPlayer.Character
     if not char then return end
+
     local hrp = char:FindFirstChild("HumanoidRootPart")
     if not hrp then return end
+
     local target = GetNearestFruit()
     if not target then
         notify("No fruit to fly to", Color3.fromRGB(255, 160, 60))
         return
     end
+
     FlyActive = true
     SetCharacterCollision(false)
+
     local speed = 100
     local reachDist = 4
     local lostTimer = 0
+
     FlyConnection = RunService.Heartbeat:Connect(function(dt)
         if not FlyActive then
             if FlyConnection then FlyConnection:Disconnect() end
             return
         end
+
         local c = LocalPlayer.Character
         if not c then StopFly() return end
+
         local currentHrp = c:FindFirstChild("HumanoidRootPart")
         if not currentHrp then StopFly() return end
+
         if not target.Parent then
             lostTimer = lostTimer + dt
             if lostTimer >= CONFIG.FruitLostDelay then
@@ -520,13 +571,16 @@ local function StartFly()
         else
             lostTimer = 0
         end
+
         local targetPos = target.Position
         local myPos = currentHrp.Position
         local dir = (targetPos - myPos)
+
         if dir.Magnitude <= reachDist then
             StopFly()
             return
         end
+
         dir = dir.Unit
         local move = dir * speed * dt
         currentHrp.CFrame = currentHrp.CFrame + move
@@ -534,6 +588,7 @@ local function StartFly()
     end)
 end
 
+-- ===== ХОДЬБА (LEGIT RUN) =====
 local function StopRun()
     RunActive = false
     if RunThread then
@@ -551,36 +606,45 @@ end
 
 local function StartRun()
     if RunActive then return end
+
     local char = LocalPlayer.Character
     if not char then return end
+
     local hrp = char:FindFirstChild("HumanoidRootPart")
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum then return end
+
     local target = GetNearestFruit()
     if not target then
         notify("No fruit to run to", Color3.fromRGB(255, 160, 60))
         return
     end
+
     RunActive = true
+
     RunThread = task.spawn(function()
         while RunActive do
             local c = LocalPlayer.Character
             if not c then StopRun() return end
+
             local currentHrp = c:FindFirstChild("HumanoidRootPart")
             local currentHum = c:FindFirstChildOfClass("Humanoid")
             if not currentHrp or not currentHum then StopRun() return end
+
             local t = GetNearestFruit()
             if not t then
                 StopRun()
                 notify("No fruit found", Color3.fromRGB(255, 160, 60))
                 return
             end
+
             local dist = (t.Position - currentHrp.Position).Magnitude
             if dist <= 4 then
                 StopRun()
                 notify("Arrived at fruit", Color3.fromRGB(100, 255, 120))
                 return
             end
+
             local path = PathfindingService:CreatePath({
                 AgentRadius = 2,
                 AgentHeight = 5,
@@ -588,9 +652,11 @@ local function StartRun()
                 AgentCanClimb = true,
                 WaypointSpacing = 4,
             })
+
             local success = pcall(function()
                 path:ComputeAsync(currentHrp.Position, t.Position)
             end)
+
             if success and path.Status == Enum.PathStatus.Success then
                 local waypoints = path:GetWaypoints()
                 for _, wp in ipairs(waypoints) do
@@ -622,11 +688,13 @@ local function StartRun()
                     if tick() > timeout then break end
                 until false
             end
+
             task.wait(0.2)
         end
     end)
 end
 
+-- ===== ХОДЬБА ДО КАФЕ =====
 local function StopCafeWalk()
     CafeWalkActive = false
     if CafeThread then
@@ -644,24 +712,31 @@ end
 
 local function StartCafeWalk()
     if CafeWalkActive then return end
+
     local char = LocalPlayer.Character
     if not char then return end
+
     local hrp = char:FindFirstChild("HumanoidRootPart")
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum then return end
+
     local cafePart = FindCafePosition()
     if not cafePart then
         notify("Cafe not found", Color3.fromRGB(255, 160, 60))
         return
     end
+
     CafeWalkActive = true
+
     CafeThread = task.spawn(function()
         while CafeWalkActive do
             local c = LocalPlayer.Character
             if not c then StopCafeWalk() return end
+
             local currentHrp = c:FindFirstChild("HumanoidRootPart")
             local currentHum = c:FindFirstChildOfClass("Humanoid")
             if not currentHrp or not currentHum then StopCafeWalk() return end
+
             if not cafePart or not cafePart.Parent then
                 cafePart = FindCafePosition()
                 if not cafePart then
@@ -670,12 +745,14 @@ local function StartCafeWalk()
                     return
                 end
             end
+
             local dist = (cafePart.Position - currentHrp.Position).Magnitude
             if dist <= 6 then
                 StopCafeWalk()
                 notify("Arrived at cafe", Color3.fromRGB(100, 255, 120))
                 return
             end
+
             local path = PathfindingService:CreatePath({
                 AgentRadius = 2,
                 AgentHeight = 5,
@@ -683,9 +760,11 @@ local function StartCafeWalk()
                 AgentCanClimb = true,
                 WaypointSpacing = 4,
             })
+
             local success = pcall(function()
                 path:ComputeAsync(currentHrp.Position, cafePart.Position)
             end)
+
             if success and path.Status == Enum.PathStatus.Success then
                 local waypoints = path:GetWaypoints()
                 for _, wp in ipairs(waypoints) do
@@ -717,11 +796,13 @@ local function StartCafeWalk()
                     if tick() > timeout then break end
                 until false
             end
+
             task.wait(0.2)
         end
     end)
 end
 
+-- ===== АВТОФАРМ =====
 local function StopAutoFruit()
     AutoFruitActive = false
     if AutoThread then
@@ -733,6 +814,8 @@ end
 
 local function StartAutoFruit()
     if AutoFruitActive then return true end
+
+    -- Проверка команды
     if not IsTeamSelected() then
         notify("Selecting team " .. CONFIG.Team .. "...", Color3.fromRGB(255, 200, 100))
         local ok = selectTeam()
@@ -747,22 +830,30 @@ local function StartAutoFruit()
         end
         notify("Team selected!", Color3.fromRGB(100, 255, 120))
     end
+
     AutoFruitActive = true
     notify("Auto Fruit Started", Color3.fromRGB(100, 255, 120))
+
     AutoThread = task.spawn(function()
         notify("[Auto] Thread spawned", Color3.fromRGB(100, 200, 255))
+
         local emptyTimer = 0
         local lastCheck = tick()
         local collectedCount = 0
         local iterCount = 0
+
         while AutoFruitActive do
             iterCount = iterCount + 1
             task.wait(0.5)
+
             local now = tick()
             local dt = now - lastCheck
             lastCheck = now
+
             local hasFruit = HasAnyFruit()
             local nearest = GetNearestFruit()
+
+            -- Логируем каждые 3 секунды (каждую 6-ю итерацию)
             if iterCount % 6 == 0 then
                 notify(
                     "[Auto] iter=" .. iterCount ..
@@ -772,8 +863,10 @@ local function StartAutoFruit()
                     Color3.fromRGB(150, 180, 255)
                 )
             end
+
             if hasFruit and nearest then
                 emptyTimer = 0
+
                 if not FlyActive then
                     notify("[Auto] Calling StartFly...", Color3.fromRGB(100, 255, 200))
                     local ok, err = pcall(StartFly)
@@ -785,6 +878,7 @@ local function StartAutoFruit()
                 end
             else
                 emptyTimer = emptyTimer + dt
+
                 if emptyTimer >= CONFIG.FruitLostDelay then
                     if FlyActive then StopFly() end
                     notify("No fruits. Collected " .. collectedCount .. ". Hopping...", Color3.fromRGB(255, 160, 60))
@@ -795,11 +889,14 @@ local function StartAutoFruit()
                 end
             end
         end
+
         notify("[Auto] Thread ended", Color3.fromRGB(255, 100, 100))
     end)
+
     return true
 end
 
+-- ===== UI =====
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "FruitESP_UI"
 screenGui.ResetOnSpawn = false
@@ -809,26 +906,29 @@ screenGui.Parent = parentGui
 
 local function notify(text, color)
     local box = Instance.new("TextLabel")
-    box.Size = UDim2.new(0, 280, 0, 46)
-    box.Position = UDim2.new(0.5, -140, 0, -60)
+    box.Size = UDim2.new(0, 300, 0, 46)
+    box.Position = UDim2.new(0.5, -150, 0, -60)
     box.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
     box.BackgroundTransparency = 0.1
     box.BorderSizePixel = 0
     box.Font = Enum.Font.GothamBold
-    box.TextSize = 15
+    box.TextSize = 14
     box.TextColor3 = color or Color3.fromRGB(255, 255, 255)
     box.TextStrokeTransparency = 1
     box.Text = text
     box.Parent = screenGui
+
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, 10)
     c.Parent = box
+
     TweenService:Create(box, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Position = UDim2.new(0.5, -140, 0, 20),
+        Position = UDim2.new(0.5, -150, 0, 20),
     }):Play()
+
     task.delay(3, function()
         local out = TweenService:Create(box, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-            Position = UDim2.new(0.5, -140, 0, -60),
+            Position = UDim2.new(0.5, -150, 0, -60),
             BackgroundTransparency = 1,
             TextTransparency = 1,
         })
@@ -849,14 +949,17 @@ mainFrame.BorderSizePixel = 0
 mainFrame.Visible = false
 mainFrame.ClipsDescendants = true
 mainFrame.Parent = screenGui
+
 local corner = Instance.new("UICorner")
 corner.CornerRadius = UDim.new(0, 10)
 corner.Parent = mainFrame
+
 local stroke = Instance.new("UIStroke")
 stroke.Color = Color3.fromRGB(255, 60, 60)
 stroke.Thickness = 1
 stroke.Transparency = 0.6
 stroke.Parent = mainFrame
+
 local title = Instance.new("TextLabel")
 title.Name = "Title"
 title.Size = UDim2.new(1, 0, 0, 36)
@@ -867,6 +970,7 @@ title.TextColor3 = Color3.fromRGB(255, 255, 255)
 title.TextStrokeTransparency = 1
 title.Text = "FRUIT ESP"
 title.Parent = mainFrame
+
 local titleLine = Instance.new("Frame")
 titleLine.Size = UDim2.new(1, -20, 0, 1)
 titleLine.Position = UDim2.new(0, 10, 0, 36)
@@ -889,9 +993,11 @@ local function makeButton(text, posY)
     btn.TextStrokeTransparency = 1
     btn.AutoButtonColor = false
     btn.Parent = mainFrame
+
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, 6)
     c.Parent = btn
+
     return btn
 end
 
@@ -915,6 +1021,7 @@ closeBtn.TextStrokeTransparency = 1
 closeBtn.Text = "×"
 closeBtn.AutoButtonColor = false
 closeBtn.Parent = mainFrame
+
 local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 6)
 closeCorner.Parent = closeBtn
@@ -932,9 +1039,11 @@ toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 toggleBtn.TextStrokeTransparency = 1
 toggleBtn.Text = "FRUIT ESP"
 toggleBtn.Parent = screenGui
+
 local toggleCorner = Instance.new("UICorner")
 toggleCorner.CornerRadius = UDim.new(0, 10)
 toggleCorner.Parent = toggleBtn
+
 local toggleStroke = Instance.new("UIStroke")
 toggleStroke.Color = Color3.fromRGB(255, 60, 60)
 toggleStroke.Thickness = 1
@@ -1115,6 +1224,7 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
+-- ===== ИНИЦИАЛИЗАЦИЯ =====
 loadConfig()
 refreshAllButtons()
 
@@ -1165,12 +1275,15 @@ end)
 RunService.RenderStepped:Connect(function()
     local myPos = GetMyPosition()
     if not myPos then return end
+
     for inst, data in pairs(Tracked) do
         if not inst.Parent or not data.Adornee or not data.Adornee.Parent then
             RemoveFruit(inst)
             continue
         end
+
         local dist = (data.Adornee.Position - myPos).Magnitude
+
         if CONFIG.MinDistance > 0 and dist < CONFIG.MinDistance then
             data.Gui.Enabled = false
             if data.Highlight then data.Highlight.Enabled = false end
@@ -1192,6 +1305,7 @@ RunService.RenderStepped:Connect(function()
             end
         end
     end
+
     for player, data in pairs(PlayerESP) do
         if not data.Head or not data.Head.Parent then
             if data.Gui then data.Gui:Destroy() end
@@ -1199,7 +1313,9 @@ RunService.RenderStepped:Connect(function()
             PlayerESP[player] = nil
             continue
         end
+
         local dist = (data.Head.Position - myPos).Magnitude
+
         if CONFIG.MinDistance > 0 and dist < CONFIG.MinDistance then
             data.Gui.Enabled = false
             if data.Highlight then data.Highlight.Enabled = false end
