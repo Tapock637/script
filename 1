@@ -1,6 +1,9 @@
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then
@@ -30,6 +33,11 @@ local CONFIG = {
     MaxSize = 8,
 }
 
+local State = {
+    ShowFruits = true,
+    ShowPlayers = false,
+}
+
 local Tracked = {}
 local PlayerESP = {}
 
@@ -45,8 +53,7 @@ local FruitLookup = BuildLookup()
 
 local function HasFruitName(str)
     if type(str) ~= "string" then return false end
-    local lower = str:lower()
-    return FruitLookup[lower] == true
+    return FruitLookup[str:lower()] == true
 end
 
 local function IsNpc(inst)
@@ -132,7 +139,6 @@ local function TryTrackFruit(inst)
     if not IsFruitRelated(inst) then return end
     local adornee = GetAdornee(inst)
     if not adornee then return end
-
     local size = GetSize(adornee)
     if size and size > CONFIG.MaxSize then return end
 
@@ -212,6 +218,314 @@ local function GetMyPosition()
     return nil
 end
 
+-- ================= UI =================
+
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "FruitESP_UI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+local parentGui = (gethui and gethui()) or CoreGui
+screenGui.Parent = parentGui
+
+local mainFrame = Instance.new("Frame")
+mainFrame.Name = "Main"
+mainFrame.Size = UDim2.new(0, 220, 0, 180)
+mainFrame.Position = UDim2.new(0, 20, 0, 100)
+mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+mainFrame.BackgroundTransparency = 0.1
+mainFrame.BorderSizePixel = 0
+mainFrame.Visible = false
+mainFrame.ClipsDescendants = true
+mainFrame.Parent = screenGui
+
+local corner = Instance.new("UICorner")
+corner.CornerRadius = UDim.new(0, 10)
+corner.Parent = mainFrame
+
+local stroke = Instance.new("UIStroke")
+stroke.Color = Color3.fromRGB(255, 60, 60)
+stroke.Thickness = 1.5
+stroke.Transparency = 0.3
+stroke.Parent = mainFrame
+
+local title = Instance.new("TextLabel")
+title.Name = "Title"
+title.Size = UDim2.new(1, 0, 0, 36)
+title.BackgroundTransparency = 1
+title.Font = Enum.Font.GothamBold
+title.TextSize = 16
+title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.Text = "FRUIT ESP"
+title.Parent = mainFrame
+
+local titleLine = Instance.new("Frame")
+titleLine.Size = UDim2.new(1, -20, 0, 1)
+titleLine.Position = UDim2.new(0, 10, 0, 36)
+titleLine.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+titleLine.BackgroundTransparency = 0.5
+titleLine.BorderSizePixel = 0
+titleLine.Parent = mainFrame
+
+local function makeButton(text, posY, color)
+    local btn = Instance.new("TextButton")
+    btn.Name = text:gsub("%s", "")
+    btn.Size = UDim2.new(1, -24, 0, 34)
+    btn.Position = UDim2.new(0, 12, 0, posY)
+    btn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+    btn.BorderSizePixel = 0
+    btn.Font = Enum.Font.Gotham
+    btn.TextSize = 14
+    btn.TextColor3 = Color3.fromRGB(200, 200, 200)
+    btn.Text = "○  " .. text
+    btn.AutoButtonColor = false
+    btn.Parent = mainFrame
+
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 6)
+    c.Parent = btn
+
+    local s = Instance.new("UIStroke")
+    s.Color = color
+    s.Thickness = 1
+    s.Transparency = 1
+    s.Parent = btn
+
+    return btn, s
+end
+
+local fruitBtn, fruitStroke = makeButton("See Fruits", 46, CONFIG.FruitColor)
+local playerBtn, playerStroke = makeButton("See Players", 86, CONFIG.PlayerColor)
+local closeBtn = Instance.new("TextButton")
+closeBtn.Size = UDim2.new(0, 26, 0, 26)
+closeBtn.Position = UDim2.new(1, -32, 0, 5)
+closeBtn.BackgroundColor3 = Color3.fromRGB(255, 60, 60)
+closeBtn.BorderSizePixel = 0
+closeBtn.Font = Enum.Font.GothamBold
+closeBtn.TextSize = 14
+closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.Text = "×"
+closeBtn.AutoButtonColor = false
+closeBtn.Parent = mainFrame
+
+local closeCorner = Instance.new("UICorner")
+closeCorner.CornerRadius = UDim.new(0, 6)
+closeCorner.Parent = closeBtn
+
+local toggleBtn = Instance.new("TextButton")
+toggleBtn.Name = "Toggle"
+toggleBtn.Size = UDim2.new(0, 110, 0, 36)
+toggleBtn.Position = UDim2.new(0, 20, 0, 60)
+toggleBtn.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+toggleBtn.BackgroundTransparency = 0.1
+toggleBtn.BorderSizePixel = 0
+toggleBtn.Font = Enum.Font.GothamBold
+toggleBtn.TextSize = 14
+toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBtn.Text = "FRUIT ESP"
+toggleBtn.Parent = screenGui
+
+local toggleCorner = Instance.new("UICorner")
+toggleCorner.CornerRadius = UDim.new(0, 10)
+toggleCorner.Parent = toggleBtn
+
+local toggleStroke = Instance.new("UIStroke")
+toggleStroke.Color = Color3.fromRGB(255, 60, 60)
+toggleStroke.Thickness = 1.5
+toggleStroke.Transparency = 0.3
+toggleStroke.Parent = toggleBtn
+
+local function updateButtonVisual(btn, stroke, enabled, color)
+    if enabled then
+        btn.TextColor3 = color
+        btn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+        TweenService:Create(stroke, TweenInfo.new(0.25), {Transparency = 0.2}):Play()
+    else
+        btn.TextColor3 = Color3.fromRGB(140, 140, 140)
+        btn.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
+        TweenService:Create(stroke, TweenInfo.new(0.25), {Transparency = 1}):Play()
+    end
+end
+
+local function updateButtonText(btn, text, enabled)
+    btn.Text = (enabled and "●  " or "○  ") .. text
+end
+
+local function refreshFruitButton()
+    updateButtonVisual(fruitBtn, fruitStroke, State.ShowFruits, CONFIG.FruitColor)
+    updateButtonText(fruitBtn, "See Fruits", State.ShowFruits)
+end
+
+local function refreshPlayerButton()
+    updateButtonVisual(playerBtn, playerStroke, State.ShowPlayers, CONFIG.PlayerColor)
+    updateButtonText(playerBtn, "See Players", State.ShowPlayers)
+end
+
+refreshFruitButton()
+refreshPlayerButton()
+
+local function setFruitVisibility(v)
+    for _, data in pairs(Tracked) do
+        if data.Gui then data.Gui.Enabled = v end
+        if data.Highlight then data.Highlight.Enabled = v end
+    end
+end
+
+local function setPlayerVisibility(v)
+    for _, data in pairs(PlayerESP) do
+        if data.Gui then data.Gui.Enabled = v end
+        if data.Highlight then data.Highlight.Enabled = v end
+    end
+end
+
+fruitBtn.MouseButton1Click:Connect(function()
+    State.ShowFruits = not State.ShowFruits
+    refreshFruitButton()
+    setFruitVisibility(State.ShowFruits)
+end)
+
+playerBtn.MouseButton1Click:Connect(function()
+    State.ShowPlayers = not State.ShowPlayers
+    refreshPlayerButton()
+    setPlayerVisibility(State.ShowPlayers)
+end)
+
+-- Анимация открытия / закрытия меню
+local function openMenu()
+    mainFrame.Visible = true
+    mainFrame.Size = UDim2.new(0, 0, 0, 0)
+    mainFrame.BackgroundTransparency = 1
+    TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Size = UDim2.new(0, 220, 0, 180),
+        BackgroundTransparency = 0.1,
+    }):Play()
+    for _, child in ipairs(mainFrame:GetChildren()) do
+        if child:IsA("TextButton") or child:IsA("TextLabel") then
+            child.TextTransparency = 1
+            TweenService:Create(child, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                TextTransparency = 0,
+            }):Play()
+        end
+    end
+end
+
+local function closeMenu()
+    local t = TweenService:Create(mainFrame, TweenInfo.new(0.25, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+        Size = UDim2.new(0, 0, 0, 0),
+        BackgroundTransparency = 1,
+    })
+    t:Play()
+    t.Completed:Connect(function()
+        mainFrame.Visible = false
+    end)
+end
+
+toggleBtn.MouseButton1Click:Connect(function()
+    if mainFrame.Visible then
+        closeMenu()
+    else
+        openMenu()
+    end
+end)
+
+closeBtn.MouseButton1Click:Connect(function()
+    closeMenu()
+end)
+
+-- Перетаскивание кнопки-тоггла
+local dragging = false
+local dragStart, startPos
+
+toggleBtn.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = toggleBtn.Position
+    end
+end)
+
+toggleBtn.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        toggleBtn.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- Перетаскивание основного меню (за заголовок)
+local menuDragging = false
+local menuDragStart, menuStartPos
+
+title.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        menuDragging = true
+        menuDragStart = input.Position
+        menuStartPos = mainFrame.Position
+    end
+end)
+
+title.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+        menuDragging = false
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if menuDragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - menuDragStart
+        mainFrame.Position = UDim2.new(menuStartPos.X.Scale, menuStartPos.X.Offset + delta.X, menuStartPos.Y.Scale, menuStartPos.Y.Offset + delta.Y)
+    end
+end)
+
+-- ================= Уведомление о старте =================
+
+local function notify(text, color)
+    local box = Instance.new("TextLabel")
+    box.Size = UDim2.new(0, 260, 0, 46)
+    box.Position = UDim2.new(0.5, -130, 0, -60)
+    box.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    box.BackgroundTransparency = 0.1
+    box.BorderSizePixel = 0
+    box.Font = Enum.Font.GothamBold
+    box.TextSize = 16
+    box.TextColor3 = color or Color3.fromRGB(255, 255, 255)
+    box.Text = text
+    box.Parent = screenGui
+
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 10)
+    c.Parent = box
+
+    local s = Instance.new("UIStroke")
+    s.Color = color or Color3.fromRGB(255, 60, 60)
+    s.Thickness = 1.5
+    s.Transparency = 0.2
+    s.Parent = box
+
+    TweenService:Create(box, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0.5, -130, 0, 20),
+    }):Play()
+
+    task.delay(3, function()
+        local out = TweenService:Create(box, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+            Position = UDim2.new(0.5, -130, 0, -60),
+            BackgroundTransparency = 1,
+            TextTransparency = 1,
+        })
+        out:Play()
+        out.Completed:Connect(function()
+            box:Destroy()
+        end)
+    end)
+end
+
+-- ================= Запуск =================
+
 ScanFruits()
 
 task.spawn(function()
@@ -268,12 +582,17 @@ RunService.RenderStepped:Connect(function()
             data.Gui.Enabled = false
             if data.Highlight then data.Highlight.Enabled = false end
         else
-            data.Gui.Enabled = true
-            if data.Highlight then data.Highlight.Enabled = true end
-            if CONFIG.ShowDistance then
-                data.Label.Text = string.format("%s\n[%d studs]", data.Name, math.floor(dist))
+            if State.ShowFruits then
+                data.Gui.Enabled = true
+                if data.Highlight then data.Highlight.Enabled = true end
+                if CONFIG.ShowDistance then
+                    data.Label.Text = string.format("%s\n[%d studs]", data.Name, math.floor(dist))
+                else
+                    data.Label.Text = data.Name
+                end
             else
-                data.Label.Text = data.Name
+                data.Gui.Enabled = false
+                if data.Highlight then data.Highlight.Enabled = false end
             end
         end
     end
@@ -295,13 +614,33 @@ RunService.RenderStepped:Connect(function()
             data.Gui.Enabled = false
             if data.Highlight then data.Highlight.Enabled = false end
         else
-            data.Gui.Enabled = true
-            if data.Highlight then data.Highlight.Enabled = true end
-            if CONFIG.ShowDistance then
-                data.Label.Text = string.format("%s\n[%d studs]", data.BaseText, math.floor(dist))
+            if State.ShowPlayers then
+                data.Gui.Enabled = true
+                if data.Highlight then data.Highlight.Enabled = true end
+                if CONFIG.ShowDistance then
+                    data.Label.Text = string.format("%s\n[%d studs]", data.BaseText, math.floor(dist))
+                else
+                    data.Label.Text = data.BaseText
+                end
             else
-                data.Label.Text = data.BaseText
+                data.Gui.Enabled = false
+                if data.Highlight then data.Highlight.Enabled = false end
             end
         end
+    end
+end)
+
+-- Стартовое уведомление
+task.spawn(function()
+    task.wait(0.5)
+    local found = false
+    for _ in pairs(Tracked) do
+        found = true
+        break
+    end
+    if found then
+        notify("FRUIT FOUND", CONFIG.FruitColor)
+    else
+        notify("NO FRUIT FOUND", Color3.fromRGB(255, 160, 60))
     end
 end)
