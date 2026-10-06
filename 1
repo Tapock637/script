@@ -1,3 +1,7 @@
+-- ============================================================
+-- Fruit ESP + Auto Features (Test Version)
+-- ============================================================
+
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local Workspace = game:GetService("Workspace")
@@ -5,6 +9,8 @@ local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
 local PathfindingService = game:GetService("PathfindingService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local TeleportService = game:GetService("TeleportService")
 
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then
@@ -12,15 +18,9 @@ if not LocalPlayer then
     LocalPlayer = Players.LocalPlayer
 end
 
-local FRUIT_NAMES = {
-    "Flame", "Ice", "Sand", "Dark", "Eagle", "Diamond", "Light",
-    "Rubber", "Ghost", "Magma", "Quake", "Buddha", "Love", "Creation",
-    "Spider", "Sound", "Phoenix", "Portal", "Lightning", "Pain", "Blizzard",
-    "Gravity", "Mammoth", "T-Rex", "Dough", "Shadow", "Venom", "Gas",
-    "Spirit", "Tiger", "Yeti", "Magnet", "Kitsune", "Control", "Dragon",
-    "Leopard", "Rumble", "Revive", "Barrier", "Paw"
-}
-
+-- ============================================================
+-- CONFIG
+-- ============================================================
 local CONFIG = {
     ScanInterval = 1.0,
     MaxDistance = 0,
@@ -32,23 +32,71 @@ local CONFIG = {
     MyColor = Color3.fromRGB(0, 200, 255),
     MaxSize = 8,
     CafeKeywords = {"cafe", "café", "rose", "kingdom"},
+    ConfigFile = "fruit_esp_config.json",
+    PlaceId = 2753915549,
+    ServerHopDelay = 2,
+    FruitLostDelay = 3,
 }
 
+local FRUIT_NAMES = {
+    "Flame", "Ice", "Sand", "Dark", "Eagle", "Diamond", "Light",
+    "Rubber", "Ghost", "Magma", "Quake", "Buddha", "Love", "Creation",
+    "Spider", "Sound", "Phoenix", "Portal", "Lightning", "Pain", "Blizzard",
+    "Gravity", "Mammoth", "T-Rex", "Dough", "Shadow", "Venom", "Gas",
+    "Spirit", "Tiger", "Yeti", "Magnet", "Kitsune", "Control", "Dragon",
+    "Leopard", "Rumble", "Revive", "Barrier", "Paw"
+}
+
+-- ============================================================
+-- STATE
+-- ============================================================
 local State = {
     ShowFruits = true,
     ShowPlayers = false,
+    AutoFruit = false,
 }
 
 local Tracked = {}
 local PlayerESP = {}
-
 local FlyActive = false
 local RunActive = false
 local CafeWalkActive = false
+local AutoFruitActive = false
 local FlyConnection = nil
 local RunThread = nil
 local CafeThread = nil
+local AutoThread = nil
 
+-- ============================================================
+-- CONFIG LOAD/SAVE (Delta only)
+-- ============================================================
+local function loadConfig()
+    if not (isfile and readfile) then return end
+    local ok, data = pcall(function()
+        return game:GetService("HttpService"):JSONDecode(readfile(CONFIG.ConfigFile))
+    end)
+    if ok and data then
+        if data.ShowFruits ~= nil then State.ShowFruits = data.ShowFruits end
+        if data.ShowPlayers ~= nil then State.ShowPlayers = data.ShowPlayers end
+        if data.AutoFruit ~= nil then State.AutoFruit = data.AutoFruit end
+    end
+end
+
+local function saveConfig()
+    if not (writefile and isfile) then return end
+    local data = {
+        ShowFruits = State.ShowFruits,
+        ShowPlayers = State.ShowPlayers,
+        AutoFruit = State.AutoFruit,
+    }
+    pcall(function()
+        writefile(CONFIG.ConfigFile, game:GetService("HttpService"):JSONEncode(data))
+    end)
+end
+
+-- ============================================================
+-- FRUIT DETECTION
+-- ============================================================
 local function BuildLookup()
     local set = {}
     for _, name in ipairs(FRUIT_NAMES) do
@@ -74,15 +122,10 @@ local function IsFruitRelated(inst)
     if IsNpc(inst) then return false end
     if not (inst:IsA("Tool") or inst:IsA("Model")) then return false end
     if not HasFruitName(inst.Name) then return false end
-
     if inst:IsA("Model") then
-        local handle = inst:FindFirstChild("Handle")
-        if not handle then
-            local hasPart = inst:FindFirstChildWhichIsA("BasePart", true)
-            if not hasPart then return false end
-        end
+        local hasPart = inst:FindFirstChildWhichIsA("BasePart", true)
+        if not hasPart then return false end
     end
-
     return true
 end
 
@@ -187,6 +230,9 @@ local function ScanFruits()
     end
 end
 
+-- ============================================================
+-- PLAYER ESP
+-- ============================================================
 local function ApplyPlayerESP(player, isLocal)
     if PlayerESP[player] then
         if PlayerESP[player].Gui then PlayerESP[player].Gui:Destroy() end
@@ -226,6 +272,9 @@ local function ApplyPlayerESP(player, isLocal)
     end)
 end
 
+-- ============================================================
+-- HELPERS
+-- ============================================================
 local function GetMyPosition()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
@@ -252,6 +301,15 @@ local function GetNearestFruit()
     end
 
     return nearest
+end
+
+local function HasAnyFruit()
+    for inst, data in pairs(Tracked) do
+        if inst.Parent and data.Adornee and data.Adornee.Parent then
+            return true
+        end
+    end
+    return false
 end
 
 local function FindCafePosition()
@@ -303,51 +361,90 @@ local function FindCafePosition()
     return nil
 end
 
-local screenGui = Instance.new("ScreenGui")
-screenGui.Name = "FruitESP_UI"
-screenGui.ResetOnSpawn = false
-screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-
-local parentGui = (gethui and gethui()) or CoreGui
-screenGui.Parent = parentGui
-
-local function notify(text, color)
-    local box = Instance.new("TextLabel")
-    box.Size = UDim2.new(0, 260, 0, 46)
-    box.Position = UDim2.new(0.5, -130, 0, -60)
-    box.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
-    box.BackgroundTransparency = 0.1
-    box.BorderSizePixel = 0
-    box.Font = Enum.Font.GothamBold
-    box.TextSize = 16
-    box.TextColor3 = color or Color3.fromRGB(255, 255, 255)
-    box.TextStrokeTransparency = 1
-    box.Text = text
-    box.Parent = screenGui
-
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, 10)
-    c.Parent = box
-
-    TweenService:Create(box, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Position = UDim2.new(0.5, -130, 0, 20),
-    }):Play()
-
-    task.delay(3, function()
-        local out = TweenService:Create(box, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-            Position = UDim2.new(0.5, -130, 0, -60),
-            BackgroundTransparency = 1,
-            TextTransparency = 1,
-        })
-        out:Play()
-        out.Completed:Connect(function()
-            box:Destroy()
-        end)
+-- ============================================================
+-- SERVER HOP
+-- ============================================================
+local function ServerHop()
+    pcall(function()
+        TeleportService:TeleportToPlaceInstance(CONFIG.PlaceId, game.JobId, LocalPlayer)
     end)
 end
 
--- ================= FLY =================
+local function RejoinServer()
+    pcall(function()
+        TeleportService:Teleport(CONFIG.PlaceId, LocalPlayer)
+    end)
+end
 
+-- ============================================================
+-- STORE FRUIT (Test)
+-- ============================================================
+local function TryStoreFruit()
+    local char = LocalPlayer.Character
+    if not char then
+        return false, "No character"
+    end
+
+    -- Find fruit tool in character (equipped fruit)
+    local fruitTool = nil
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA("Tool") and HasFruitName(child.Name) then
+            fruitTool = child
+            break
+        end
+    end
+
+    if not fruitTool then
+        -- Check backpack
+        local backpack = LocalPlayer:FindFirstChild("Backpack")
+        if backpack then
+            for _, child in ipairs(backpack:GetChildren()) do
+                if child:IsA("Tool") and HasFruitName(child.Name) then
+                    fruitTool = child
+                    break
+                end
+            end
+        end
+    end
+
+    if not fruitTool then
+        return false, "No fruit in inventory"
+    end
+
+    -- Try to find Remotes
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    if not remotes then
+        return false, "No Remotes folder"
+    end
+
+    local commF = remotes:FindFirstChild("CommF_")
+    if not commF then
+        return false, "No CommF_ remote"
+    end
+
+    -- Try common store functions
+    local attempts = {
+        {"StoreFruit", fruitTool.Name},
+        {"Store", fruitTool.Name},
+        {"FruitStore", fruitTool.Name},
+        {"StoreFruit", fruitTool.Name .. "-" .. fruitTool.Name},
+    }
+
+    for _, args in ipairs(attempts) do
+        local ok, result = pcall(function()
+            return commF:InvokeServer(unpack(args))
+        end)
+        if ok and result then
+            return true, "Stored via " .. args[1]
+        end
+    end
+
+    return false, "All store attempts failed"
+end
+
+-- ============================================================
+-- FLY
+-- ============================================================
 local function StopFly()
     FlyActive = false
     if FlyConnection then
@@ -367,13 +464,13 @@ local function StartFly()
 
     local target = GetNearestFruit()
     if not target then
-        notify("NO FRUIT FOUND", Color3.fromRGB(255, 160, 60))
         return
     end
 
     FlyActive = true
     local speed = 100
     local reachDist = 3
+    local lostTimer = 0
 
     FlyConnection = RunService.Heartbeat:Connect(function(dt)
         if not FlyActive then
@@ -388,12 +485,21 @@ local function StartFly()
         if not currentHrp then StopFly() return end
 
         if not target.Parent then
-            target = GetNearestFruit()
-            if not target then
+            lostTimer = lostTimer + dt
+            if lostTimer >= CONFIG.FruitLostDelay then
                 StopFly()
-                notify("TARGET LOST", Color3.fromRGB(255, 160, 60))
+                if AutoFruitActive then
+                    TryStoreFruit()
+                    task.wait(CONFIG.ServerHopDelay)
+                    ServerHop()
+                end
                 return
             end
+            target = GetNearestFruit()
+            if target then lostTimer = 0 end
+            if not target then return end
+        else
+            lostTimer = 0
         end
 
         local targetPos = target.Position
@@ -402,7 +508,6 @@ local function StartFly()
 
         if dir.Magnitude <= reachDist then
             StopFly()
-            notify("ARRIVED", Color3.fromRGB(100, 255, 120))
             return
         end
 
@@ -413,8 +518,9 @@ local function StartFly()
     end)
 end
 
--- ================= LEGIT RUN (Pathfinding + MoveTo) =================
-
+-- ============================================================
+-- LEGIT RUN (Pathfinding)
+-- ============================================================
 local function StopRun()
     RunActive = false
     if RunThread then
@@ -441,10 +547,7 @@ local function StartRun()
     if not hrp or not hum then return end
 
     local target = GetNearestFruit()
-    if not target then
-        notify("NO FRUIT FOUND", Color3.fromRGB(255, 160, 60))
-        return
-    end
+    if not target then return end
 
     RunActive = true
 
@@ -460,14 +563,12 @@ local function StartRun()
             local t = GetNearestFruit()
             if not t then
                 StopRun()
-                notify("NO FRUIT FOUND", Color3.fromRGB(255, 160, 60))
                 return
             end
 
             local dist = (t.Position - currentHrp.Position).Magnitude
             if dist <= 4 then
                 StopRun()
-                notify("ARRIVED", Color3.fromRGB(100, 255, 120))
                 return
             end
 
@@ -520,8 +621,9 @@ local function StartRun()
     end)
 end
 
--- ================= CAFE WALK (Pathfinding + MoveTo) =================
-
+-- ============================================================
+-- CAFE WALK
+-- ============================================================
 local function StopCafeWalk()
     CafeWalkActive = false
     if CafeThread then
@@ -548,10 +650,7 @@ local function StartCafeWalk()
     if not hrp or not hum then return end
 
     local cafePart = FindCafePosition()
-    if not cafePart then
-        notify("CAFE NOT FOUND", Color3.fromRGB(255, 160, 60))
-        return
-    end
+    if not cafePart then return end
 
     CafeWalkActive = true
 
@@ -568,7 +667,6 @@ local function StartCafeWalk()
                 cafePart = FindCafePosition()
                 if not cafePart then
                     StopCafeWalk()
-                    notify("CAFE LOST", Color3.fromRGB(255, 160, 60))
                     return
                 end
             end
@@ -576,7 +674,6 @@ local function StartCafeWalk()
             local dist = (cafePart.Position - currentHrp.Position).Magnitude
             if dist <= 6 then
                 StopCafeWalk()
-                notify("ARRIVED AT CAFE", Color3.fromRGB(100, 255, 120))
                 return
             end
 
@@ -629,11 +726,111 @@ local function StartCafeWalk()
     end)
 end
 
--- ================= UI =================
+-- ============================================================
+-- AUTO FRUIT
+-- ============================================================
+local function StopAutoFruit()
+    AutoFruitActive = false
+    if AutoThread then
+        task.cancel(AutoThread)
+        AutoThread = nil
+    end
+    StopFly()
+end
 
+local function StartAutoFruit()
+    if AutoFruitActive then return end
+    AutoFruitActive = true
+
+    AutoThread = task.spawn(function()
+        local noFruitTimer = 0
+        local lastCheck = tick()
+
+        while AutoFruitActive do
+            task.wait(0.5)
+
+            local now = tick()
+            local dt = now - lastCheck
+            lastCheck = now
+
+            if HasAnyFruit() then
+                noFruitTimer = 0
+
+                if not FlyActive then
+                    local fruit = GetNearestFruit()
+                    if fruit then
+                        StartFly()
+                    end
+                end
+            else
+                noFruitTimer = noFruitTimer + dt
+
+                if noFruitTimer >= CONFIG.FruitLostDelay then
+                    if FlyActive then
+                        StopFly()
+                        TryStoreFruit()
+                        task.wait(CONFIG.ServerHopDelay)
+                    end
+                    ServerHop()
+                    return
+                end
+            end
+        end
+    end)
+end
+
+-- ============================================================
+-- UI NOTIFY
+-- ============================================================
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name = "FruitESP_UI"
+screenGui.ResetOnSpawn = false
+screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+
+local parentGui = (gethui and gethui()) or CoreGui
+screenGui.Parent = parentGui
+
+local function notify(text, color)
+    local box = Instance.new("TextLabel")
+    box.Size = UDim2.new(0, 260, 0, 46)
+    box.Position = UDim2.new(0.5, -130, 0, -60)
+    box.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    box.BackgroundTransparency = 0.1
+    box.BorderSizePixel = 0
+    box.Font = Enum.Font.GothamBold
+    box.TextSize = 16
+    box.TextColor3 = color or Color3.fromRGB(255, 255, 255)
+    box.TextStrokeTransparency = 1
+    box.Text = text
+    box.Parent = screenGui
+
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 10)
+    c.Parent = box
+
+    TweenService:Create(box, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0.5, -130, 0, 20),
+    }):Play()
+
+    task.delay(3, function()
+        local out = TweenService:Create(box, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+            Position = UDim2.new(0.5, -130, 0, -60),
+            BackgroundTransparency = 1,
+            TextTransparency = 1,
+        })
+        out:Play()
+        out.Completed:Connect(function()
+            box:Destroy()
+        end)
+    end)
+end
+
+-- ============================================================
+-- UI MENU
+-- ============================================================
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "Main"
-mainFrame.Size = UDim2.new(0, 220, 0, 340)
+mainFrame.Size = UDim2.new(0, 220, 0, 380)
 mainFrame.Position = UDim2.new(0, 20, 0, 100)
 mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
 mainFrame.BackgroundTransparency = 0.1
@@ -698,6 +895,8 @@ local playerBtn = makeButton("See Players", 86)
 local flyBtn = makeButton("Fly to Fruit", 126)
 local runBtn = makeButton("Legit Run", 166)
 local cafeBtn = makeButton("Test Walk to Cafe", 206)
+local storeBtn = makeButton("Test Store Fruit", 246)
+local autoBtn = makeButton("Auto Fruit", 286)
 
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0, 26, 0, 26)
@@ -757,10 +956,12 @@ local function refreshAllButtons()
     refreshButton(flyBtn, "Fly to Fruit", FlyActive, Color3.fromRGB(100, 200, 255))
     refreshButton(runBtn, "Legit Run", RunActive, Color3.fromRGB(100, 255, 120))
     refreshButton(cafeBtn, "Test Walk to Cafe", CafeWalkActive, Color3.fromRGB(255, 200, 100))
+    refreshButton(autoBtn, "Auto Fruit", State.AutoFruit, Color3.fromRGB(255, 100, 200))
 end
 
-refreshAllButtons()
-
+-- ============================================================
+-- VISIBILITY
+-- ============================================================
 local function setFruitVisibility(v)
     for _, data in pairs(Tracked) do
         if data.Gui then data.Gui.Enabled = v end
@@ -775,16 +976,21 @@ local function setPlayerVisibility(v)
     end
 end
 
+-- ============================================================
+-- BUTTON CONNECTIONS
+-- ============================================================
 fruitBtn.MouseButton1Click:Connect(function()
     State.ShowFruits = not State.ShowFruits
     refreshAllButtons()
     setFruitVisibility(State.ShowFruits)
+    saveConfig()
 end)
 
 playerBtn.MouseButton1Click:Connect(function()
     State.ShowPlayers = not State.ShowPlayers
     refreshAllButtons()
     setPlayerVisibility(State.ShowPlayers)
+    saveConfig()
 end)
 
 flyBtn.MouseButton1Click:Connect(function()
@@ -802,12 +1008,35 @@ cafeBtn.MouseButton1Click:Connect(function()
     refreshAllButtons()
 end)
 
+storeBtn.MouseButton1Click:Connect(function()
+    local ok, msg = TryStoreFruit()
+    if ok then
+        notify("STORE OK: " .. msg, Color3.fromRGB(100, 255, 120))
+    else
+        notify("STORE FAIL: " .. msg, Color3.fromRGB(255, 100, 100))
+    end
+end)
+
+autoBtn.MouseButton1Click:Connect(function()
+    State.AutoFruit = not State.AutoFruit
+    if State.AutoFruit then
+        StartAutoFruit()
+    else
+        StopAutoFruit()
+    end
+    refreshAllButtons()
+    saveConfig()
+end)
+
+-- ============================================================
+-- MENU ANIMATION
+-- ============================================================
 local function openMenu()
     mainFrame.Visible = true
     mainFrame.Size = UDim2.new(0, 0, 0, 0)
     mainFrame.BackgroundTransparency = 1
     TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, 220, 0, 340),
+        Size = UDim2.new(0, 220, 0, 380),
         BackgroundTransparency = 0.1,
     }):Play()
     for _, child in ipairs(mainFrame:GetChildren()) do
@@ -839,6 +1068,9 @@ closeBtn.MouseButton1Click:Connect(function()
     closeMenu()
 end)
 
+-- ============================================================
+-- DRAG
+-- ============================================================
 local dragging = false
 local dragStart, startPos
 
@@ -887,7 +1119,11 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- ================= ЗАПУСК =================
+-- ============================================================
+-- INIT
+-- ============================================================
+loadConfig()
+refreshAllButtons()
 
 ScanFruits()
 
@@ -993,14 +1229,14 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
+-- Auto start if config says so
+if State.AutoFruit then
+    StartAutoFruit()
+end
+
 task.spawn(function()
     task.wait(0.5)
-    local found = false
-    for _ in pairs(Tracked) do
-        found = true
-        break
-    end
-    if found then
+    if HasAnyFruit() then
         notify("FRUIT FOUND", CONFIG.FruitColor)
     else
         notify("NO FRUIT FOUND", Color3.fromRGB(255, 160, 60))
