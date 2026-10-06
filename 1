@@ -61,7 +61,13 @@ local FruitLookup = BuildLookup()
 
 local function HasFruitName(str)
     if type(str) ~= "string" then return false end
-    return FruitLookup[str:lower()] == true
+    local lower = str:lower()
+    for name in pairs(FruitLookup) do
+        if lower:find(name, 1, true) then
+            return true
+        end
+    end
+    return false
 end
 
 local function IsNpc(inst)
@@ -177,8 +183,6 @@ local function ScanFruits()
         end
     end
 end
-
--- ================= ФРУКТ В РУКАХ =================
 
 local function ClearHandFruit(inst)
     local data = HandFruits[inst]
@@ -391,12 +395,6 @@ local function notify(text, color)
     local c = Instance.new("UICorner")
     c.CornerRadius = UDim.new(0, 10)
     c.Parent = box
-
-    local s = Instance.new("UIStroke")
-    s.Color = color or Color3.fromRGB(255, 60, 60)
-    s.Thickness = 1.5
-    s.Transparency = 0.2
-    s.Parent = box
 
     TweenService:Create(box, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
         Position = UDim2.new(0.5, -130, 0, 20),
@@ -654,7 +652,7 @@ local function StartCafeWalk()
         if flatDir.Magnitude > 0 then
             flatDir = flatDir.Unit
             local move = flatDir * currentHum.WalkSpeed * dt
-            currentHrp.CFrame = currentHrp.CFrame + move
+            currentHrp.CFrame = currentHrp.CFrame + flatDir * currentHum.WalkSpeed * dt
         end
 
         local rayOrigin = currentHrp.Position
@@ -695,8 +693,8 @@ corner.Parent = mainFrame
 
 local stroke = Instance.new("UIStroke")
 stroke.Color = Color3.fromRGB(255, 60, 60)
-stroke.Thickness = 1.5
-stroke.Transparency = 0.3
+stroke.Thickness = 1
+stroke.Transparency = 0.6
 stroke.Parent = mainFrame
 
 local title = Instance.new("TextLabel")
@@ -737,20 +735,14 @@ local function makeButton(text, posY, color)
     c.CornerRadius = UDim.new(0, 6)
     c.Parent = btn
 
-    local s = Instance.new("UIStroke")
-    s.Color = color
-    s.Thickness = 1
-    s.Transparency = 1
-    s.Parent = btn
-
-    return btn, s
+    return btn
 end
 
-local fruitBtn, fruitStroke = makeButton("See Fruits", 46, CONFIG.FruitColor)
-local playerBtn, playerStroke = makeButton("See Players", 86, CONFIG.PlayerColor)
-local flyBtn, flyStroke = makeButton("Fly to Fruit", 126, Color3.fromRGB(100, 200, 255))
-local runBtn, runStroke = makeButton("Legit Run", 166, Color3.fromRGB(100, 255, 120))
-local cafeBtn, cafeStroke = makeButton("Test Walk to Cafe", 206, Color3.fromRGB(255, 200, 100))
+local fruitBtn = makeButton("See Fruits", 46, CONFIG.FruitColor)
+local playerBtn = makeButton("See Players", 86, CONFIG.PlayerColor)
+local flyBtn = makeButton("Fly to Fruit", 126, Color3.fromRGB(100, 200, 255))
+local runBtn = makeButton("Legit Run", 166, Color3.fromRGB(100, 255, 120))
+local cafeBtn = makeButton("Test Walk to Cafe", 206, Color3.fromRGB(255, 200, 100))
 
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0, 26, 0, 26)
@@ -789,33 +781,31 @@ toggleCorner.Parent = toggleBtn
 
 local toggleStroke = Instance.new("UIStroke")
 toggleStroke.Color = Color3.fromRGB(255, 60, 60)
-toggleStroke.Thickness = 1.5
-toggleStroke.Transparency = 0.3
+toggleStroke.Thickness = 1
+toggleStroke.Transparency = 0.6
 toggleStroke.Parent = toggleBtn
 
-local function updateButtonVisual(btn, stroke, enabled, color)
+local function updateButtonVisual(btn, enabled, color)
     if enabled then
         btn.TextColor3 = color
         btn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-        TweenService:Create(stroke, TweenInfo.new(0.25), {Transparency = 0.2}):Play()
     else
         btn.TextColor3 = Color3.fromRGB(140, 140, 140)
         btn.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
-        TweenService:Create(stroke, TweenInfo.new(0.25), {Transparency = 1}):Play()
     end
 end
 
-local function refreshButton(btn, stroke, text, enabled, color)
-    updateButtonVisual(btn, stroke, enabled, color)
+local function refreshButton(btn, text, enabled, color)
+    updateButtonVisual(btn, enabled, color)
     btn.Text = (enabled and "●  " or "○  ") .. text
 end
 
 local function refreshAllButtons()
-    refreshButton(fruitBtn, fruitStroke, "See Fruits", State.ShowFruits, CONFIG.FruitColor)
-    refreshButton(playerBtn, playerStroke, "See Players", State.ShowPlayers, CONFIG.PlayerColor)
-    refreshButton(flyBtn, flyStroke, "Fly to Fruit", FlyActive, Color3.fromRGB(100, 200, 255))
-    refreshButton(runBtn, runStroke, "Legit Run", RunActive, Color3.fromRGB(100, 255, 120))
-    refreshButton(cafeBtn, cafeStroke, "Test Walk to Cafe", CafeWalkActive, Color3.fromRGB(255, 200, 100))
+    refreshButton(fruitBtn, "See Fruits", State.ShowFruits, CONFIG.FruitColor)
+    refreshButton(playerBtn, "See Players", State.ShowPlayers, CONFIG.PlayerColor)
+    refreshButton(flyBtn, "Fly to Fruit", FlyActive, Color3.fromRGB(100, 200, 255))
+    refreshButton(runBtn, "Legit Run", RunActive, Color3.fromRGB(100, 255, 120))
+    refreshButton(cafeBtn, "Test Walk to Cafe", CafeWalkActive, Color3.fromRGB(255, 200, 100))
 end
 
 refreshAllButtons()
@@ -949,8 +939,6 @@ UserInputService.InputChanged:Connect(function(input)
         mainFrame.Position = UDim2.new(menuStartPos.X.Scale, menuStartPos.X.Offset + delta.X, menuStartPos.Y.Scale, menuStartPos.Y.Offset + delta.Y)
     end
 end)
-
--- ================= ЗАПУСК =================
 
 ScanFruits()
 ScanHandFruits()
