@@ -7,6 +7,7 @@ local CoreGui = game:GetService("CoreGui")
 local PathfindingService = game:GetService("PathfindingService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then
@@ -14,6 +15,7 @@ if not LocalPlayer then
     LocalPlayer = Players.LocalPlayer
 end
 
+-- ===== CONFIG =====
 local CONFIG = {
     ScanInterval = 1.0,
     MaxDistance = 0,
@@ -29,6 +31,7 @@ local CONFIG = {
     PlaceId = 2753915549,
     ServerHopDelay = 2,
     FruitLostDelay = 3,
+    Team = "Marines",
 }
 
 local FRUIT_NAMES = {
@@ -40,6 +43,7 @@ local FRUIT_NAMES = {
     "Leopard", "Rumble", "Revive", "Barrier", "Paw"
 }
 
+-- ===== STATE =====
 local State = {
     ShowFruits = true,
     ShowPlayers = false,
@@ -57,10 +61,11 @@ local RunThread = nil
 local CafeThread = nil
 local AutoThread = nil
 
+-- ===== CONFIG LOAD/SAVE =====
 local function loadConfig()
     if not (isfile and readfile) then return end
     local ok, data = pcall(function()
-        return game:GetService("HttpService"):JSONDecode(readfile(CONFIG.ConfigFile))
+        return HttpService:JSONDecode(readfile(CONFIG.ConfigFile))
     end)
     if ok and data then
         if data.ShowFruits ~= nil then State.ShowFruits = data.ShowFruits end
@@ -77,10 +82,36 @@ local function saveConfig()
         AutoFruit = State.AutoFruit,
     }
     pcall(function()
-        writefile(CONFIG.ConfigFile, game:GetService("HttpService"):JSONEncode(data))
+        writefile(CONFIG.ConfigFile, HttpService:JSONEncode(data))
     end)
 end
 
+-- ===== TEAM SELECTION =====
+local function selectTeam()
+    local playerGui = LocalPlayer:WaitForChild("PlayerGui", 5)
+    if not playerGui then return end
+    local mainGui = playerGui:WaitForChild("Main", 5)
+    if not mainGui then return end
+    local chooseTeam = mainGui:FindFirstChild("ChooseTeam")
+    if not chooseTeam then return end
+
+    local teamFrame = chooseTeam:FindFirstChild("Container")
+    if not teamFrame then return end
+
+    local teamButton = teamFrame:FindFirstChild(CONFIG.Team)
+    if not teamButton then return end
+
+    local viewport = teamButton:FindFirstChild("Frame")
+    if not viewport then return end
+    local textButton = viewport:FindFirstChild("ViewportFrame")
+    if not textButton then return end
+    local btn = textButton:FindFirstChild("TextButton")
+    if btn then
+        btn:Activate()
+    end
+end
+
+-- ===== FRUIT DETECTION =====
 local function BuildLookup()
     local set = {}
     for _, name in ipairs(FRUIT_NAMES) do
@@ -214,6 +245,7 @@ local function ScanFruits()
     end
 end
 
+-- ===== PLAYER ESP =====
 local function ApplyPlayerESP(player, isLocal)
     if PlayerESP[player] then
         if PlayerESP[player].Gui then PlayerESP[player].Gui:Destroy() end
@@ -253,6 +285,7 @@ local function ApplyPlayerESP(player, isLocal)
     end)
 end
 
+-- ===== HELPERS =====
 local function GetMyPosition()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
@@ -339,6 +372,7 @@ local function FindCafePosition()
     return nil
 end
 
+-- ===== INVENTORY & STORE =====
 local function GetInventoryFruits()
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
     if not remotes then return nil, "No Remotes" end
@@ -360,50 +394,57 @@ local function GetInventoryFruits()
 end
 
 local function TryStoreFruit()
-    local fruits, err = GetInventoryFruits()
-    if not fruits then
-        return false, err or "No inventory"
+    local char = LocalPlayer.Character
+    if not char then return false, "No character" end
+
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return false, "No backpack" end
+
+    local fruitTool = nil
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA("Tool") and HasFruitName(child.Name) then
+            fruitTool = child
+            break
+        end
     end
-    if #fruits == 0 then
-        return false, "No fruit in inventory"
+    if not fruitTool then
+        for _, child in ipairs(backpack:GetChildren()) do
+            if child:IsA("Tool") and HasFruitName(child.Name) then
+                fruitTool = child
+                break
+            end
+        end
+    end
+
+    if not fruitTool then
+        return false, "No fruit in hand or backpack"
     end
 
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
     local commF = remotes and remotes:FindFirstChild("CommF_")
     if not commF then return false, "No CommF_" end
 
-    local fruitName = fruits[1]
-    local attempts = {
-        {"StoreFruit", fruitName},
-        {"Store", fruitName},
-        {"FruitStore", fruitName},
-        {"StoreFruit", fruitName .. "-" .. fruitName},
-    }
+    local fruitName = fruitTool.Name:gsub(" Fruit", "")
+    local args = fruitName .. "-" .. fruitName
 
-    for _, args in ipairs(attempts) do
-        local ok, result = pcall(function()
-            return commF:InvokeServer(unpack(args))
-        end)
-        if ok and result then
-            return true, "Stored " .. fruitName
-        end
+    local ok, result = pcall(function()
+        return commF:InvokeServer("StoreFruit", args, fruitTool)
+    end)
+
+    if ok and result then
+        return true, "Stored " .. fruitName
     end
-
-    return false, "Store failed for " .. fruitName
+    return false, "Store failed"
 end
 
+-- ===== SERVER HOP =====
 local function ServerHop()
     pcall(function()
         TeleportService:TeleportToPlaceInstance(CONFIG.PlaceId, game.JobId, LocalPlayer)
     end)
 end
 
-local function RejoinServer()
-    pcall(function()
-        TeleportService:Teleport(CONFIG.PlaceId, LocalPlayer)
-    end)
-end
-
+-- ===== FLY =====
 local function StopFly()
     FlyActive = false
     if FlyConnection then
@@ -475,6 +516,7 @@ local function StartFly()
     end)
 end
 
+-- ===== LEGIT RUN (Pathfinding) =====
 local function StopRun()
     RunActive = false
     if RunThread then
@@ -575,6 +617,7 @@ local function StartRun()
     end)
 end
 
+-- ===== CAFE WALK =====
 local function StopCafeWalk()
     CafeWalkActive = false
     if CafeThread then
@@ -677,6 +720,7 @@ local function StartCafeWalk()
     end)
 end
 
+-- ===== AUTO FRUIT =====
 local function StopAutoFruit()
     AutoFruitActive = false
     if AutoThread then
@@ -727,6 +771,7 @@ local function StartAutoFruit()
     end)
 end
 
+-- ===== UI =====
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "FruitESP_UI"
 screenGui.ResetOnSpawn = false
@@ -915,6 +960,7 @@ local function setPlayerVisibility(v)
     end
 end
 
+-- ===== BUTTON CONNECTIONS =====
 fruitBtn.MouseButton1Click:Connect(function()
     State.ShowFruits = not State.ShowFruits
     refreshAllButtons()
@@ -964,6 +1010,7 @@ autoBtn.MouseButton1Click:Connect(function()
     saveConfig()
 end)
 
+-- ===== MENU ANIMATION =====
 local function openMenu()
     mainFrame.Visible = true
     mainFrame.Size = UDim2.new(0, 0, 0, 0)
@@ -1001,6 +1048,7 @@ closeBtn.MouseButton1Click:Connect(function()
     closeMenu()
 end)
 
+-- ===== DRAG =====
 local dragging = false
 local dragStart, startPos
 
@@ -1049,8 +1097,15 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
+-- ===== INIT =====
 loadConfig()
 refreshAllButtons()
+
+-- Выбор команды
+task.spawn(function()
+    task.wait(1)
+    selectTeam()
+end)
 
 ScanFruits()
 
