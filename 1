@@ -14,7 +14,6 @@ if not LocalPlayer then
     LocalPlayer = Players.LocalPlayer
 end
 
--- ================= CONFIG =================
 local CONFIG = {
     ScanInterval = 1.0,
     TextSize = 18,
@@ -27,11 +26,9 @@ local CONFIG = {
     Team = "Marines",
     FlySpeed = 100,
     ReachDistance = 3,
-    -- НОВЫЙ ПАРАМЕТР: максимальное количество игроков на сервере для хопа
     MaxPlayersForHop = 8,
 }
 
--- ================= СПИСОК ФРУКТОВ И ИХ КОДОВ =================
 local FRUIT_CODES = {
     ["Rocket Fruit"] = "Rocket-Rocket", ["Spin Fruit"] = "Spin-Spin",
     ["Chop Fruit"] = "Chop-Chop", ["Spring Fruit"] = "Spring-Spring",
@@ -56,7 +53,6 @@ local FRUIT_CODES = {
     ["Kitsune Fruit"] = "Kitsune-Kitsune",
 }
 
--- ================= ИСКЛЮЧЕНИЯ =================
 local EXCLUDE = {
     "gacha","dealer","shop","stand","vendor","npc","pedestal","display",
     "clone","effect","particle","aura","trail","island","portal","door",
@@ -64,14 +60,12 @@ local EXCLUDE = {
     "fruitmachine","fruitvendor","fruitdealer","fruitstand",
 }
 
--- ================= СОСТОЯНИЕ =================
 local State = { AutoFruit = false }
 local Tracked = {}
 local AutoFruitActive = false
 local AutoThread = nil
 local AutoFlyConn = nil
 
--- ================= ЗАГРУЗКА/СОХРАНЕНИЕ КОНФИГА =================
 local function loadConfig()
     if not (isfile and readfile) then return end
     local ok, data = pcall(function()
@@ -89,7 +83,6 @@ local function saveConfig()
     end)
 end
 
--- ================= ФИЛЬТРЫ ДЛЯ ПОИСКА ФРУКТОВ =================
 local function HasExcluded(str)
     if type(str) ~= "string" then return false end
     local l = str:lower()
@@ -99,14 +92,29 @@ local function HasExcluded(str)
     return false
 end
 
+local function IsKnownFruit(str)
+    if type(str) ~= "string" then return false end
+    if FRUIT_CODES[str] then return true end
+    local l = str:lower()
+    for fname, _ in pairs(FRUIT_CODES) do
+        local fl = fname:lower()
+        local base = fl:gsub(" fruit","")
+        if l == fl or l == base then return true end
+    end
+    return false
+end
+
 local function IsFruitName(str)
     if type(str) ~= "string" then return false end
     local l = str:lower()
-    if not l:find("fruit", 1, true) then return false end
-    if HasExcluded(str) then return false end
-    local c = l:gsub("fruit",""):gsub("%s+","")
-    if c == "" or c:match("^%d+$") then return false end
-    return true
+    if l:find("fruit", 1, true) then
+        if HasExcluded(str) then return false end
+        local c = l:gsub("fruit",""):gsub("%s+","")
+        if c == "" or c:match("^%d+$") then return false end
+        return true
+    end
+    if IsKnownFruit(str) then return true end
+    return false
 end
 
 local function IsNpc(inst)
@@ -137,7 +145,6 @@ local function IsFruitRelated(inst)
     return true
 end
 
--- ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
 local function GetSize(adornee)
     if adornee:IsA("BasePart") then
         local s = adornee.Size
@@ -163,7 +170,6 @@ local function GetAdornee(inst)
     return nil
 end
 
--- ================= ESP =================
 local function CreateBillboard(adornee, text, color)
     local bb = Instance.new("BillboardGui")
     bb.Name = "FruitESP"
@@ -231,7 +237,6 @@ local function ScanFruits()
     end
 end
 
--- ================= ПОЗИЦИЯ И ПОИСК ФРУКТОВ =================
 local function GetMyPosition()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
@@ -265,7 +270,6 @@ local function HasAnyFruit()
     return false
 end
 
--- ================= КОЛЛИЗИЯ =================
 local function SetCollision(enabled)
     local char = LocalPlayer.Character
     if not char then return end
@@ -278,22 +282,6 @@ local function SetCollision(enabled)
     if hrp then hrp.CanCollide = enabled end
 end
 
--- ================= СНЯТИЕ ИНСТРУМЕНТОВ =================
-local function UnequipAllTools()
-    local char = LocalPlayer.Character
-    if not char then return end
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if not backpack then return end
-    for _, child in ipairs(char:GetChildren()) do
-        if child:IsA("Tool") then
-            pcall(function()
-                child.Parent = backpack
-            end)
-        end
-    end
-end
-
--- ================= КОМАНДА =================
 local function IsTeamSelected()
     if LocalPlayer.Team ~= nil and LocalPlayer.Team.Name ~= "" then
         return true
@@ -315,32 +303,98 @@ local function selectTeam()
     end)
 end
 
--- ================= СОХРАНЕНИЕ ФРУКТА =================
-local function TryStoreFruit()
-    local char = LocalPlayer.Character
-    if not char then return false end
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if not backpack then return false end
-    local tool = nil
-    for _, child in ipairs(char:GetChildren()) do
-        if child:IsA("Tool") then tool = child break end
+-- ================= STORE FRUIT (более надёжный) =================
+local function GetFruitCode(toolName)
+    -- 1. Прямое совпадение по таблице
+    if FRUIT_CODES[toolName] then
+        return FRUIT_CODES[toolName]
     end
-    if not tool then
-        for _, child in ipairs(backpack:GetChildren()) do
-            if child:IsA("Tool") then tool = child break end
+    -- 2. Если название с " Fruit" на конце
+    local base = toolName:gsub(" Fruit", "")
+    if FRUIT_CODES[base .. " Fruit"] then
+        return FRUIT_CODES[base .. " Fruit"]
+    end
+    -- 3. Генерируем код
+    return base .. "-" .. base
+end
+
+local function FindFruitTool()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    
+    -- Ищем в руках
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA("Tool") and IsFruitName(child.Name) and not HasExcluded(child.Name) then
+            return child
         end
     end
+    -- Ищем в рюкзаке
+    if backpack then
+        for _, child in ipairs(backpack:GetChildren()) do
+            if child:IsA("Tool") and IsFruitName(child.Name) and not HasExcluded(child.Name) then
+                return child
+            end
+        end
+    end
+    return nil
+end
+
+local function TryStoreFruit()
+    local tool = FindFruitTool()
     if not tool then return false end
+    
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
     local commF = remotes and remotes:FindFirstChild("CommF_")
     if not commF then return false end
-    local code = FRUIT_CODES[tool.Name] or (tool.Name:gsub(" Fruit","") .. "-" .. tool.Name:gsub(" Fruit",""))
-    return pcall(function()
-        commF:InvokeServer("StoreFruit", code, tool)
-    end)
+    
+    local code = GetFruitCode(tool.Name)
+    
+    -- Пробуем разные варианты
+    local attempts = {
+        {code, tool},
+        {code, tool.Name},
+        {tool.Name, tool},
+        {tool.Name},
+        {code},
+    }
+    
+    for _, args in ipairs(attempts) do
+        local ok, result = pcall(function()
+            return commF:InvokeServer("StoreFruit", unpack(args))
+        end)
+        if ok then
+            task.wait(0.3)
+            -- Проверяем, исчез ли фрукт
+            if not tool.Parent then
+                return true
+            end
+        end
+    end
+    
+    return false
 end
 
--- ================= SERVER HOP ЧЕРЕЗ ROPROXY API =================
+-- Снятие инструментов (только не-фруктов, чтобы не мешали)
+local function UnequipNonFruits()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return end
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA("Tool") then
+            -- Не снимаем фрукты, они нужны для стора
+            if not IsFruitName(child.Name) then
+                pcall(function()
+                    child.Parent = backpack
+                end)
+            end
+        end
+    end
+end
+-- =================================================================
+
+-- ================= SERVER HOP =================
 local function ServerHop()
     local servers = {}
     local success, response = pcall(function()
@@ -356,7 +410,7 @@ local function ServerHop()
         end)
         if ok and data and data.data then
             for _, server in ipairs(data.data) do
-                if server.id ~= game.JobId and server.playing < server.maxPlayers then
+                if server.id ~= game.JobId and server.playing < CONFIG.MaxPlayersForHop then
                     table.insert(servers, server.id)
                 end
             end
@@ -374,7 +428,7 @@ local function ServerHop()
         end)
     end
 end
--- =============================================================
+-- =============================================
 
 local function StopAutoFruit()
     AutoFruitActive = false
@@ -449,8 +503,7 @@ local function StartAutoFruit()
             else
                 emptyTimer = emptyTimer + dt
                 if emptyTimer >= CONFIG.FruitLostDelay then
-                    UnequipAllTools()
-                    task.wait(0.3)
+                    -- Сохраняем что осталось
                     TryStoreFruit()
                     task.wait(CONFIG.ServerHopDelay)
                     ServerHop()
@@ -710,41 +763,17 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
+-- ================= АВТО-СТОР (переписан) =================
 task.spawn(function()
     while task.wait(0.5) do
-        local char = LocalPlayer.Character
-        if not char then continue end
-        local backpack = LocalPlayer:FindFirstChild("Backpack")
-        if not backpack then continue end
-
-        UnequipAllTools()
-
-        local candidates = {}
-        for _, child in ipairs(char:GetChildren()) do
-            if child:IsA("Tool") then table.insert(candidates, child) end
+        -- 1. Сначала находим фрукт (в руках или рюкзаке)
+        local tool = FindFruitTool()
+        if tool then
+            -- 2. Пробуем сохранить
+            TryStoreFruit()
         end
-        for _, child in ipairs(backpack:GetChildren()) do
-            if child:IsA("Tool") then table.insert(candidates, child) end
-        end
-
-        for _, tool in ipairs(candidates) do
-            local name = tool.Name:lower()
-            local isFruit = name:find("fruit", 1, true) ~= nil
-            if not isFruit then
-                for fname, _ in pairs(FRUIT_CODES) do
-                    local base = fname:lower():gsub(" fruit","")
-                    if name == fname:lower() or name == base then
-                        isFruit = true
-                        break
-                    end
-                end
-            end
-
-            if isFruit and not HasExcluded(tool.Name) then
-                TryStoreFruit()
-                break
-            end
-        end
+        -- 3. Убираем из рук НЕ-фрукты, чтобы ESP не путался
+        UnequipNonFruits()
     end
 end)
 
