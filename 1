@@ -326,27 +326,29 @@ local function TryStoreFruit()
     end)
 end
 
--- ================= ИСПРАВЛЕННЫЙ SERVER HOP =================
+-- ================= SERVER HOP =================
 local function ServerHop()
     local servers = {}
-    local cursor = ""
-    
     local success, response = pcall(function()
-        return HttpService:JSONDecode(game:HttpGet(
-            "https://games.roblox.com/v1/games/" .. CONFIG.PlaceId .. 
-            "/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true" .. 
-            (cursor ~= "" and ("&cursor=" .. cursor) or "")
-        ))
+        return game:HttpGet(
+            "https://games.roblox.com/v1/games/" .. CONFIG.PlaceId ..
+            "/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true"
+        )
     end)
-    
-    if success and response and response.data then
-        for _, server in ipairs(response.data) do
-            if server.id ~= game.JobId and server.playing < server.maxPlayers then
-                table.insert(servers, server.id)
+
+    if success and response then
+        local ok, data = pcall(function()
+            return HttpService:JSONDecode(response)
+        end)
+        if ok and data and data.data then
+            for _, server in ipairs(data.data) do
+                if server.id ~= game.JobId and server.playing < server.maxPlayers then
+                    table.insert(servers, server.id)
+                end
             end
         end
     end
-    
+
     if #servers > 0 then
         local randomServer = servers[math.random(1, #servers)]
         pcall(function()
@@ -358,7 +360,7 @@ local function ServerHop()
         end)
     end
 end
--- ============================================================
+-- =============================================
 
 local function StopAutoFruit()
     AutoFruitActive = false
@@ -692,7 +694,6 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- АВТО-СТОР + снятие из рук
 task.spawn(function()
     while task.wait(0.5) do
         local char = LocalPlayer.Character
