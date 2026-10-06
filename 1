@@ -15,7 +15,6 @@ if not LocalPlayer then
     LocalPlayer = Players.LocalPlayer
 end
 
--- ===== CONFIG =====
 local CONFIG = {
     ScanInterval = 1.0,
     MaxDistance = 0,
@@ -25,7 +24,7 @@ local CONFIG = {
     FruitColor = Color3.fromRGB(255, 60, 60),
     PlayerColor = Color3.fromRGB(60, 140, 255),
     MyColor = Color3.fromRGB(0, 200, 255),
-    MaxSize = 12, -- Увеличил, т.к. некоторые фрукты крупные
+    MaxSize = 12,
     CafeKeywords = {"cafe", "café", "rose", "kingdom"},
     ConfigFile = "fruit_esp_config.json",
     PlaceId = 2753915549,
@@ -34,7 +33,6 @@ local CONFIG = {
     Team = "Marines",
 }
 
--- ===== ТОЧНЫЙ СПИСОК ФРУКТОВ (для Store) =====
 local FRUIT_CODES = {
     ["Rocket Fruit"] = "Rocket-Rocket",
     ["Spin Fruit"] = "Spin-Spin",
@@ -79,7 +77,6 @@ local FRUIT_CODES = {
     ["Kitsune Fruit"] = "Kitsune-Kitsune",
 }
 
--- ===== ИСКЛЮЧЕНИЯ (ЧТО НЕ СЧИТАТЬ ФРУКТОМ) =====
 local EXCLUDE_KEYWORDS = {
     "gacha", "dealer", "shop", "stand", "vendor", "npc",
     "pedestal", "display", "clone", "effect", "particle",
@@ -103,7 +100,6 @@ local RunThread = nil
 local CafeThread = nil
 local AutoThread = nil
 
--- ===== ЗАГРУЗКА/СОХРАНЕНИЕ КОНФИГА =====
 local function loadConfig()
     if not (isfile and readfile) then return end
     local ok, data = pcall(function()
@@ -128,7 +124,6 @@ local function saveConfig()
     end)
 end
 
--- ===== ПРОВЕРКА КОМАНДЫ =====
 local function IsTeamSelected()
     if LocalPlayer.Team ~= nil and LocalPlayer.Team.Name ~= "" then
         return true
@@ -147,19 +142,20 @@ local function selectTeam()
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
     local commF = remotes and remotes:FindFirstChild("CommF_")
     if not commF then
-        notify("CommF_ not found!", Color3.fromRGB(255, 100, 100))
+        print("[selectTeam] CommF_ not found!")
         return false
     end
     local ok, result = pcall(function()
         return commF:InvokeServer("SetTeam", CONFIG.Team)
     end)
     if ok then
+        print("[selectTeam] Team set to " .. CONFIG.Team)
         return true
     end
+    print("[selectTeam] Error: " .. tostring(result))
     return false
 end
 
--- ===== ФИЛЬТРЫ ДЛЯ ПОИСКА ФРУКТОВ =====
 local function HasExcludedKeyword(str)
     if type(str) ~= "string" then return false end
     local lower = str:lower()
@@ -171,13 +167,11 @@ local function HasExcludedKeyword(str)
     return false
 end
 
--- Ищем слово "Fruit" в имени, но исключаем мусор
 local function IsFruitName(str)
     if type(str) ~= "string" then return false end
     local lower = str:lower()
     if not lower:find("fruit", 1, true) then return false end
     if HasExcludedKeyword(str) then return false end
-    -- Исключаем просто "Fruit" или "1 Fruit" и т.п.
     local cleaned = lower:gsub("fruit", ""):gsub("%s+", "")
     if cleaned == "" or cleaned:match("^%d+$") then return false end
     return true
@@ -193,7 +187,6 @@ local function IsFruitRelated(inst)
     if IsNpc(inst) then return false end
     if not (inst:IsA("Tool") or inst:IsA("Model")) then return false end
     if not IsFruitName(inst.Name) then return false end
-    -- Проверяем, что у модели есть реальная часть
     if inst:IsA("Model") then
         local hasPart = inst:FindFirstChildWhichIsA("BasePart", true)
         if not hasPart then return false end
@@ -201,7 +194,6 @@ local function IsFruitRelated(inst)
     return true
 end
 
--- ===== ПОЛУЧЕНИЕ РАЗМЕРА И АДРЕСАТА =====
 local function GetSize(adornee)
     if adornee:IsA("BasePart") then
         local s = adornee.Size
@@ -227,7 +219,6 @@ local function GetAdornee(inst)
     return nil
 end
 
--- ===== СОЗДАНИЕ ESP =====
 local function CreateBillboard(adornee, text, color, size)
     local bb = Instance.new("BillboardGui")
     bb.Name = "FruitESP"
@@ -304,7 +295,6 @@ local function ScanFruits()
     end
 end
 
--- ===== ESP ДЛЯ ИГРОКОВ =====
 local function ApplyPlayerESP(player, isLocal)
     if PlayerESP[player] then
         if PlayerESP[player].Gui then PlayerESP[player].Gui:Destroy() end
@@ -344,7 +334,6 @@ local function ApplyPlayerESP(player, isLocal)
     end)
 end
 
--- ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
 local function GetMyPosition()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
@@ -431,7 +420,6 @@ local function FindCafePosition()
     return nil
 end
 
--- ===== СОХРАНЕНИЕ ФРУКТА (STORE) =====
 local function TryStoreFruit()
     local char = LocalPlayer.Character
     if not char then return false, "No character" end
@@ -440,14 +428,12 @@ local function TryStoreFruit()
     if not backpack then return false, "No backpack" end
 
     local fruitTool = nil
-    -- Ищем в руках
     for _, child in ipairs(char:GetChildren()) do
         if child:IsA("Tool") and IsFruitName(child.Name) then
             fruitTool = child
             break
         end
     end
-    -- Ищем в рюкзаке
     if not fruitTool then
         for _, child in ipairs(backpack:GetChildren()) do
             if child:IsA("Tool") and IsFruitName(child.Name) then
@@ -481,7 +467,6 @@ local function TryStoreFruit()
     return false, "Store failed for " .. fruitTool.Name
 end
 
--- ===== SERVER HOP =====
 local function ServerHop()
     pcall(function()
         local url = "https://games.roblox.com/v1/games/" .. CONFIG.PlaceId .. "/servers/Public?limit=100"
@@ -504,7 +489,6 @@ local function ServerHop()
     end)
 end
 
--- ===== КОЛЛИЗИЯ =====
 local function SetCharacterCollision(enabled)
     local char = LocalPlayer.Character
     if not char then return end
@@ -513,9 +497,12 @@ local function SetCharacterCollision(enabled)
             part.CanCollide = enabled
         end
     end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then
+        hrp.CanCollide = enabled
+    end
 end
 
--- ===== ПОЛЁТ =====
 local function StopFly()
     FlyActive = false
     if FlyConnection then
@@ -588,7 +575,6 @@ local function StartFly()
     end)
 end
 
--- ===== ХОДЬБА (LEGIT RUN) =====
 local function StopRun()
     RunActive = false
     if RunThread then
@@ -694,7 +680,6 @@ local function StartRun()
     end)
 end
 
--- ===== ХОДЬБА ДО КАФЕ =====
 local function StopCafeWalk()
     CafeWalkActive = false
     if CafeThread then
@@ -802,7 +787,6 @@ local function StartCafeWalk()
     end)
 end
 
--- ===== АВТОФАРМ =====
 local function StopAutoFruit()
     AutoFruitActive = false
     if AutoThread then
@@ -815,26 +799,39 @@ end
 local function StartAutoFruit()
     if AutoFruitActive then return true end
 
-    -- Проверка команды
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    local commF = remotes and remotes:FindFirstChild("CommF_")
+    if not commF then
+        notify("CommF_ NOT FOUND!", Color3.fromRGB(255, 100, 100))
+        print("[AutoFruit] CommF_ not found!")
+        return false
+    end
+
     if not IsTeamSelected() then
         notify("Selecting team " .. CONFIG.Team .. "...", Color3.fromRGB(255, 200, 100))
+        print("[AutoFruit] Selecting team...")
         local ok = selectTeam()
         if not ok then
             notify("Failed to select team. Abort.", Color3.fromRGB(255, 100, 100))
+            print("[AutoFruit] selectTeam failed")
             return false
         end
         task.wait(2)
         if not IsTeamSelected() then
             notify("Team not selected. Abort.", Color3.fromRGB(255, 100, 100))
+            print("[AutoFruit] Team still not selected")
             return false
         end
         notify("Team selected!", Color3.fromRGB(100, 255, 120))
+        print("[AutoFruit] Team selected")
     end
 
     AutoFruitActive = true
     notify("Auto Fruit Started", Color3.fromRGB(100, 255, 120))
+    print("[AutoFruit] Started")
 
     AutoThread = task.spawn(function()
+        print("[AutoFruit] Thread spawned")
         notify("[Auto] Thread spawned", Color3.fromRGB(100, 200, 255))
 
         local emptyTimer = 0
@@ -843,60 +840,73 @@ local function StartAutoFruit()
         local iterCount = 0
 
         while AutoFruitActive do
-            iterCount = iterCount + 1
-            task.wait(0.5)
+            local success, err = pcall(function()
+                iterCount = iterCount + 1
+                task.wait(0.5)
 
-            local now = tick()
-            local dt = now - lastCheck
-            lastCheck = now
+                local now = tick()
+                local dt = now - lastCheck
+                lastCheck = now
 
-            local hasFruit = HasAnyFruit()
-            local nearest = GetNearestFruit()
+                local hasFruit = HasAnyFruit()
+                local nearest = GetNearestFruit()
 
-            -- Логируем каждые 3 секунды (каждую 6-ю итерацию)
-            if iterCount % 6 == 0 then
-                notify(
-                    "[Auto] iter=" .. iterCount ..
-                    " hasFruit=" .. tostring(hasFruit) ..
-                    " nearest=" .. (nearest and "YES" or "NO") ..
-                    " fly=" .. tostring(FlyActive),
-                    Color3.fromRGB(150, 180, 255)
-                )
-            end
+                if iterCount % 6 == 0 then
+                    print(string.format("[AutoFruit] iter=%d hasFruit=%s nearest=%s fly=%s",
+                        iterCount, tostring(hasFruit), tostring(nearest ~= nil), tostring(FlyActive)))
+                    notify(
+                        "[Auto] iter=" .. iterCount ..
+                        " hasFruit=" .. tostring(hasFruit) ..
+                        " nearest=" .. (nearest and "YES" or "NO") ..
+                        " fly=" .. tostring(FlyActive),
+                        Color3.fromRGB(150, 180, 255)
+                    )
+                end
 
-            if hasFruit and nearest then
-                emptyTimer = 0
+                if hasFruit and nearest then
+                    emptyTimer = 0
 
-                if not FlyActive then
-                    notify("[Auto] Calling StartFly...", Color3.fromRGB(100, 255, 200))
-                    local ok, err = pcall(StartFly)
-                    if not ok then
-                        notify("[Auto] StartFly ERROR: " .. tostring(err), Color3.fromRGB(255, 100, 100))
-                    else
-                        notify("[Auto] StartFly done. FlyActive=" .. tostring(FlyActive), Color3.fromRGB(100, 255, 200))
+                    if not FlyActive then
+                        print("[AutoFruit] Calling StartFly...")
+                        notify("[Auto] Calling StartFly...", Color3.fromRGB(100, 255, 200))
+                        local ok, flyErr = pcall(StartFly)
+                        if not ok then
+                            print("[AutoFruit] StartFly ERROR: " .. tostring(flyErr))
+                            notify("[Auto] StartFly ERROR: " .. tostring(flyErr), Color3.fromRGB(255, 100, 100))
+                        else
+                            print("[AutoFruit] StartFly done. FlyActive=" .. tostring(FlyActive))
+                            notify("[Auto] StartFly done. FlyActive=" .. tostring(FlyActive), Color3.fromRGB(100, 255, 200))
+                        end
+                    end
+                else
+                    emptyTimer = emptyTimer + dt
+
+                    if emptyTimer >= CONFIG.FruitLostDelay then
+                        if FlyActive then StopFly() end
+                        print("[AutoFruit] No fruits. Hopping...")
+                        notify("No fruits. Collected " .. collectedCount .. ". Hopping...", Color3.fromRGB(255, 160, 60))
+                        TryStoreFruit()
+                        task.wait(CONFIG.ServerHopDelay)
+                        ServerHop()
+                        return
                     end
                 end
-            else
-                emptyTimer = emptyTimer + dt
+            end)
 
-                if emptyTimer >= CONFIG.FruitLostDelay then
-                    if FlyActive then StopFly() end
-                    notify("No fruits. Collected " .. collectedCount .. ". Hopping...", Color3.fromRGB(255, 160, 60))
-                    TryStoreFruit()
-                    task.wait(CONFIG.ServerHopDelay)
-                    ServerHop()
-                    return
-                end
+            if not success then
+                print("[AutoFruit] LOOP ERROR: " .. tostring(err))
+                notify("[Auto] LOOP ERROR: " .. tostring(err), Color3.fromRGB(255, 100, 100))
+                task.wait(1)
             end
         end
 
+        print("[AutoFruit] Thread ended")
         notify("[Auto] Thread ended", Color3.fromRGB(255, 100, 100))
     end)
 
     return true
 end
 
--- ===== UI =====
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "FruitESP_UI"
 screenGui.ResetOnSpawn = false
@@ -1224,7 +1234,6 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- ===== ИНИЦИАЛИЗАЦИЯ =====
 loadConfig()
 refreshAllButtons()
 
