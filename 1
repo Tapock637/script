@@ -15,7 +15,6 @@ if not LocalPlayer then
     LocalPlayer = Players.LocalPlayer
 end
 
--- ===== CONFIG =====
 local CONFIG = {
     ScanInterval = 1.0,
     MaxDistance = 0,
@@ -34,7 +33,6 @@ local CONFIG = {
     Team = "Marines",
 }
 
--- ===== FRUIT CODES (ТОЧНЫЕ ИМЕНА) =====
 local FRUIT_CODES = {
     ["Rocket Fruit"] = "Rocket-Rocket",
     ["Spin Fruit"] = "Spin-Spin",
@@ -79,7 +77,6 @@ local FRUIT_CODES = {
     ["Kitsune Fruit"] = "Kitsune-Kitsune",
 }
 
--- Список исключений (для ESP)
 local EXCLUDE_KEYWORDS = {
     "gacha", "dealer", "shop", "stand", "vendor", "npc",
     "pedestal", "display", "clone", "effect", "particle",
@@ -103,7 +100,6 @@ local RunThread = nil
 local CafeThread = nil
 local AutoThread = nil
 
--- ===== CONFIG LOAD/SAVE =====
 local function loadConfig()
     if not (isfile and readfile) then return end
     local ok, data = pcall(function()
@@ -128,56 +124,29 @@ local function saveConfig()
     end)
 end
 
--- ===== TEAM CHECK =====
 local function IsTeamSelected()
-    -- Проверяем через Team игрока
-    if LocalPlayer.Team ~= nil then
-        return true
-    end
-    -- Проверяем через GUI
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if playerGui then
-        local mainGui = playerGui:FindFirstChild("Main")
-        if mainGui then
-            local chooseTeam = mainGui:FindFirstChild("ChooseTeam")
-            if chooseTeam and chooseTeam.Visible then
-                return false
-            end
-        end
-    end
-    return false
+    return LocalPlayer.Team ~= nil
 end
 
 local function selectTeam()
-    local playerGui = LocalPlayer:WaitForChild("PlayerGui", 5)
-    if not playerGui then return end
-    local mainGui = playerGui:WaitForChild("Main", 5)
-    if not mainGui then return end
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return false end
+    local mainGui = playerGui:FindFirstChild("Main")
+    if not mainGui then return false end
     local chooseTeam = mainGui:FindFirstChild("ChooseTeam")
-    if not chooseTeam or not chooseTeam.Visible then return end
+    if not chooseTeam or not chooseTeam.Visible then return false end
     local teamFrame = chooseTeam:FindFirstChild("Container")
-    if not teamFrame then return end
+    if not teamFrame then return false end
     local teamButton = teamFrame:FindFirstChild(CONFIG.Team)
-    if not teamButton then return end
+    if not teamButton then return false end
     local viewport = teamButton:FindFirstChild("Frame")
-    if not viewport then return end
+    if not viewport then return false end
     local textButton = viewport:FindFirstChild("ViewportFrame")
-    if not textButton then return end
+    if not textButton then return false end
     local btn = textButton:FindFirstChild("TextButton")
     if btn then
         btn:Activate()
-        notify("Selected Team: " .. CONFIG.Team, Color3.fromRGB(100, 255, 120))
-    end
-end
-
--- ===== FRUIT DETECTION (ESP) =====
-local function HasFruitName(str)
-    if type(str) ~= "string" then return false end
-    -- Точное совпадение с известными фруктами
-    for name, _ in pairs(FRUIT_CODES) do
-        if str:lower() == name:lower() then
-            return true
-        end
+        return true
     end
     return false
 end
@@ -187,6 +156,16 @@ local function HasExcludedKeyword(str)
     local lower = str:lower()
     for _, kw in ipairs(EXCLUDE_KEYWORDS) do
         if lower:find(kw, 1, true) then
+            return true
+        end
+    end
+    return false
+end
+
+local function HasFruitName(str)
+    if type(str) ~= "string" then return false end
+    for name, _ in pairs(FRUIT_CODES) do
+        if str:lower() == name:lower() then
             return true
         end
     end
@@ -312,7 +291,6 @@ local function ScanFruits()
     end
 end
 
--- ===== PLAYER ESP =====
 local function ApplyPlayerESP(player, isLocal)
     if PlayerESP[player] then
         if PlayerESP[player].Gui then PlayerESP[player].Gui:Destroy() end
@@ -352,7 +330,6 @@ local function ApplyPlayerESP(player, isLocal)
     end)
 end
 
--- ===== HELPERS =====
 local function GetMyPosition()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
@@ -439,7 +416,6 @@ local function FindCafePosition()
     return nil
 end
 
--- ===== STORE FRUIT =====
 local function TryStoreFruit()
     local char = LocalPlayer.Character
     if not char then return false, "No character" end
@@ -448,14 +424,12 @@ local function TryStoreFruit()
     if not backpack then return false, "No backpack" end
 
     local fruitTool = nil
-    -- Ищем в руках
     for _, child in ipairs(char:GetChildren()) do
         if child:IsA("Tool") and HasFruitName(child.Name) then
             fruitTool = child
             break
         end
     end
-    -- Ищем в рюкзаке
     if not fruitTool then
         for _, child in ipairs(backpack:GetChildren()) do
             if child:IsA("Tool") and HasFruitName(child.Name) then
@@ -488,7 +462,6 @@ local function TryStoreFruit()
     return false, "Store failed for " .. fruitTool.Name
 end
 
--- ===== SERVER HOP =====
 local function ServerHop()
     pcall(function()
         local url = "https://games.roblox.com/v1/games/" .. CONFIG.PlaceId .. "/servers/Public?limit=100"
@@ -511,13 +484,23 @@ local function ServerHop()
     end)
 end
 
--- ===== FLY =====
+local function SetCharacterCollision(enabled)
+    local char = LocalPlayer.Character
+    if not char then return end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then
+            part.CanCollide = enabled
+        end
+    end
+end
+
 local function StopFly()
     FlyActive = false
     if FlyConnection then
         FlyConnection:Disconnect()
         FlyConnection = nil
     end
+    SetCharacterCollision(true)
 end
 
 local function StartFly()
@@ -533,6 +516,8 @@ local function StartFly()
     if not target then return end
 
     FlyActive = true
+    SetCharacterCollision(false)
+
     local speed = 100
     local reachDist = 3
     local lostTimer = 0
@@ -583,7 +568,6 @@ local function StartFly()
     end)
 end
 
--- ===== LEGIT RUN =====
 local function StopRun()
     RunActive = false
     if RunThread then
@@ -684,7 +668,6 @@ local function StartRun()
     end)
 end
 
--- ===== CAFE WALK =====
 local function StopCafeWalk()
     CafeWalkActive = false
     if CafeThread then
@@ -787,7 +770,6 @@ local function StartCafeWalk()
     end)
 end
 
--- ===== AUTO FRUIT =====
 local function StopAutoFruit()
     AutoFruitActive = false
     if AutoThread then
@@ -798,17 +780,17 @@ local function StopAutoFruit()
 end
 
 local function StartAutoFruit()
-    if AutoFruitActive then return end
+    if AutoFruitActive then return true end
 
-    -- Проверка команды
     if not IsTeamSelected() then
-        notify("Team not selected! Selecting " .. CONFIG.Team .. "...", Color3.fromRGB(255, 200, 100))
+        notify("Selecting team " .. CONFIG.Team .. "...", Color3.fromRGB(255, 200, 100))
         selectTeam()
-        task.wait(2)
+        task.wait(2.5)
         if not IsTeamSelected() then
-            notify("Failed to select team. Auto Fruit aborted.", Color3.fromRGB(255, 100, 100))
-            return
+            notify("Team not selected. Abort.", Color3.fromRGB(255, 100, 100))
+            return false
         end
+        notify("Team selected!", Color3.fromRGB(100, 255, 120))
     end
 
     AutoFruitActive = true
@@ -817,6 +799,7 @@ local function StartAutoFruit()
     AutoThread = task.spawn(function()
         local noFruitTimer = 0
         local lastCheck = tick()
+        local notifiedWaiting = false
 
         while AutoFruitActive do
             task.wait(0.5)
@@ -827,6 +810,7 @@ local function StartAutoFruit()
 
             if HasAnyFruit() then
                 noFruitTimer = 0
+                notifiedWaiting = false
 
                 if not FlyActive then
                     local fruit = GetNearestFruit()
@@ -837,22 +821,28 @@ local function StartAutoFruit()
             else
                 noFruitTimer = noFruitTimer + dt
 
+                if not notifiedWaiting and noFruitTimer > 1 then
+                    notify("Waiting for fruit...", Color3.fromRGB(255, 200, 100))
+                    notifiedWaiting = true
+                end
+
                 if noFruitTimer >= CONFIG.FruitLostDelay then
                     if FlyActive then
                         StopFly()
                     end
+                    notify("Fruit lost. Storing + hopping...", Color3.fromRGB(255, 160, 60))
                     TryStoreFruit()
                     task.wait(CONFIG.ServerHopDelay)
-                    notify("Server hopping...", Color3.fromRGB(100, 200, 255))
                     ServerHop()
                     return
                 end
             end
         end
     end)
+
+    return true
 end
 
--- ===== UI =====
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "FruitESP_UI"
 screenGui.ResetOnSpawn = false
@@ -863,13 +853,13 @@ screenGui.Parent = parentGui
 
 local function notify(text, color)
     local box = Instance.new("TextLabel")
-    box.Size = UDim2.new(0, 260, 0, 46)
-    box.Position = UDim2.new(0.5, -130, 0, -60)
+    box.Size = UDim2.new(0, 280, 0, 46)
+    box.Position = UDim2.new(0.5, -140, 0, -60)
     box.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
     box.BackgroundTransparency = 0.1
     box.BorderSizePixel = 0
     box.Font = Enum.Font.GothamBold
-    box.TextSize = 16
+    box.TextSize = 15
     box.TextColor3 = color or Color3.fromRGB(255, 255, 255)
     box.TextStrokeTransparency = 1
     box.Text = text
@@ -880,12 +870,12 @@ local function notify(text, color)
     c.Parent = box
 
     TweenService:Create(box, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Position = UDim2.new(0.5, -130, 0, 20),
+        Position = UDim2.new(0.5, -140, 0, 20),
     }):Play()
 
     task.delay(3, function()
         local out = TweenService:Create(box, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-            Position = UDim2.new(0.5, -130, 0, -60),
+            Position = UDim2.new(0.5, -140, 0, -60),
             BackgroundTransparency = 1,
             TextTransparency = 1,
         })
@@ -1080,12 +1070,17 @@ storeBtn.MouseButton1Click:Connect(function()
 end)
 
 autoBtn.MouseButton1Click:Connect(function()
-    State.AutoFruit = not State.AutoFruit
     if State.AutoFruit then
-        StartAutoFruit()
-    else
+        State.AutoFruit = false
         StopAutoFruit()
         notify("Auto Fruit Stopped", Color3.fromRGB(255, 160, 60))
+    else
+        local ok = StartAutoFruit()
+        if ok then
+            State.AutoFruit = true
+        else
+            State.AutoFruit = false
+        end
     end
     refreshAllButtons()
     saveConfig()
@@ -1128,7 +1123,6 @@ closeBtn.MouseButton1Click:Connect(function()
     closeMenu()
 end)
 
--- ===== DRAG =====
 local dragging = false
 local dragStart, startPos
 
@@ -1177,11 +1171,9 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- ===== INIT =====
 loadConfig()
 refreshAllButtons()
 
--- Проверка команды при старте
 task.spawn(function()
     task.wait(1)
     if not IsTeamSelected() then
@@ -1294,7 +1286,12 @@ RunService.RenderStepped:Connect(function()
 end)
 
 if State.AutoFruit then
-    StartAutoFruit()
+    local ok = StartAutoFruit()
+    if not ok then
+        State.AutoFruit = false
+        saveConfig()
+    end
+    refreshAllButtons()
 end
 
 task.spawn(function()
