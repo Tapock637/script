@@ -15,7 +15,6 @@ if not LocalPlayer then
     LocalPlayer = Players.LocalPlayer
 end
 
--- ===== CONFIG =====
 local CONFIG = {
     ScanInterval = 1.0,
     MaxDistance = 0,
@@ -43,7 +42,6 @@ local FRUIT_NAMES = {
     "Leopard", "Rumble", "Revive", "Barrier", "Paw"
 }
 
--- ===== STATE =====
 local State = {
     ShowFruits = true,
     ShowPlayers = false,
@@ -61,7 +59,6 @@ local RunThread = nil
 local CafeThread = nil
 local AutoThread = nil
 
--- ===== CONFIG LOAD/SAVE =====
 local function loadConfig()
     if not (isfile and readfile) then return end
     local ok, data = pcall(function()
@@ -86,7 +83,6 @@ local function saveConfig()
     end)
 end
 
--- ===== TEAM SELECTION =====
 local function selectTeam()
     local playerGui = LocalPlayer:WaitForChild("PlayerGui", 5)
     if not playerGui then return end
@@ -111,7 +107,6 @@ local function selectTeam()
     end
 end
 
--- ===== FRUIT DETECTION =====
 local function BuildLookup()
     local set = {}
     for _, name in ipairs(FRUIT_NAMES) do
@@ -245,7 +240,6 @@ local function ScanFruits()
     end
 end
 
--- ===== PLAYER ESP =====
 local function ApplyPlayerESP(player, isLocal)
     if PlayerESP[player] then
         if PlayerESP[player].Gui then PlayerESP[player].Gui:Destroy() end
@@ -285,7 +279,6 @@ local function ApplyPlayerESP(player, isLocal)
     end)
 end
 
--- ===== HELPERS =====
 local function GetMyPosition()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
@@ -372,25 +365,51 @@ local function FindCafePosition()
     return nil
 end
 
--- ===== INVENTORY & STORE =====
-local function GetInventoryFruits()
-    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
-    if not remotes then return nil, "No Remotes" end
-    local commF = remotes:FindFirstChild("CommF_")
-    if not commF then return nil, "No CommF_" end
-
-    local ok, inv = pcall(function()
-        return commF:InvokeServer("getInventory")
-    end)
-    if not ok or not inv then return nil, "getInventory failed" end
-
-    local fruits = {}
-    for _, item in pairs(inv) do
-        if type(item) == "table" and item.Type == "Blox Fruit" then
-            table.insert(fruits, item.Name)
-        end
-    end
-    return fruits, nil
+local function GetFruitCode(fruitName)
+    local mapping = {
+        ["Rocket Fruit"] = "Rocket-Rocket",
+        ["Spin Fruit"] = "Spin-Spin",
+        ["Chop Fruit"] = "Chop-Chop",
+        ["Spring Fruit"] = "Spring-Spring",
+        ["Bomb Fruit"] = "Bomb-Bomb",
+        ["Smoke Fruit"] = "Smoke-Smoke",
+        ["Spike Fruit"] = "Spike-Spike",
+        ["Flame Fruit"] = "Flame-Flame",
+        ["Falcon Fruit"] = "Bird-Bird: Falcon",
+        ["Ice Fruit"] = "Ice-Ice",
+        ["Sand Fruit"] = "Sand-Sand",
+        ["Dark Fruit"] = "Dark-Dark",
+        ["Diamond Fruit"] = "Diamond-Diamond",
+        ["Light Fruit"] = "Light-Light",
+        ["Rubber Fruit"] = "Rubber-Rubber",
+        ["Barrier Fruit"] = "Barrier-Barrier",
+        ["Ghost Fruit"] = "Revive-Revive",
+        ["Magma Fruit"] = "Magma-Magma",
+        ["Door Fruit"] = "Door-Door",
+        ["Quake Fruit"] = "Quake-Quake",
+        ["Human: Buddha Fruit"] = "Buddha-Buddha",
+        ["Love Fruit"] = "Love-Love",
+        ["Creation Fruit"] = "Creation-Creation",
+        ["Spider Fruit"] = "Spider-Spider",
+        ["Sound Fruit"] = "Sound-Sound",
+        ["Phoenix Fruit"] = "Bird-Bird: Phoenix",
+        ["Portal Fruit"] = "Portal-Portal",
+        ["Rumble Fruit"] = "Rumble-Rumble",
+        ["Pain Fruit"] = "Pain-Pain",
+        ["Blizzard Fruit"] = "Blizzard-Blizzard",
+        ["Gravity Fruit"] = "Gravity-Gravity",
+        ["Mammoth Fruit"] = "Mammoth-Mammoth",
+        ["T-Rex Fruit"] = "T-Rex-T-Rex",
+        ["Dough Fruit"] = "Dough-Dough",
+        ["Shadow Fruit"] = "Shadow-Shadow",
+        ["Venom Fruit"] = "Venom-Venom",
+        ["Control Fruit"] = "Control-Control",
+        ["Spirit Fruit"] = "Spirit-Spirit",
+        ["Dragon Fruit"] = "Dragon-Dragon",
+        ["Leopard Fruit"] = "Leopard-Leopard",
+        ["Kitsune Fruit"] = "Kitsune-Kitsune",
+    }
+    return mapping[fruitName]
 end
 
 local function TryStoreFruit()
@@ -424,27 +443,27 @@ local function TryStoreFruit()
     local commF = remotes and remotes:FindFirstChild("CommF_")
     if not commF then return false, "No CommF_" end
 
-    local fruitName = fruitTool.Name:gsub(" Fruit", "")
-    local args = fruitName .. "-" .. fruitName
+    local fruitCode = GetFruitCode(fruitTool.Name)
+    if not fruitCode then
+        return false, "Unknown fruit code for " .. fruitTool.Name
+    end
 
     local ok, result = pcall(function()
-        return commF:InvokeServer("StoreFruit", args, fruitTool)
+        return commF:InvokeServer("StoreFruit", fruitCode, fruitTool)
     end)
 
     if ok and result then
-        return true, "Stored " .. fruitName
+        return true, "Stored " .. fruitTool.Name
     end
-    return false, "Store failed"
+    return false, "Store failed for " .. fruitTool.Name
 end
 
--- ===== SERVER HOP =====
 local function ServerHop()
     pcall(function()
         TeleportService:TeleportToPlaceInstance(CONFIG.PlaceId, game.JobId, LocalPlayer)
     end)
 end
 
--- ===== FLY =====
 local function StopFly()
     FlyActive = false
     if FlyConnection then
@@ -516,7 +535,6 @@ local function StartFly()
     end)
 end
 
--- ===== LEGIT RUN (Pathfinding) =====
 local function StopRun()
     RunActive = false
     if RunThread then
@@ -617,7 +635,6 @@ local function StartRun()
     end)
 end
 
--- ===== CAFE WALK =====
 local function StopCafeWalk()
     CafeWalkActive = false
     if CafeThread then
@@ -720,7 +737,6 @@ local function StartCafeWalk()
     end)
 end
 
--- ===== AUTO FRUIT =====
 local function StopAutoFruit()
     AutoFruitActive = false
     if AutoThread then
@@ -771,7 +787,6 @@ local function StartAutoFruit()
     end)
 end
 
--- ===== UI =====
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "FruitESP_UI"
 screenGui.ResetOnSpawn = false
@@ -960,7 +975,6 @@ local function setPlayerVisibility(v)
     end
 end
 
--- ===== BUTTON CONNECTIONS =====
 fruitBtn.MouseButton1Click:Connect(function()
     State.ShowFruits = not State.ShowFruits
     refreshAllButtons()
@@ -1010,7 +1024,6 @@ autoBtn.MouseButton1Click:Connect(function()
     saveConfig()
 end)
 
--- ===== MENU ANIMATION =====
 local function openMenu()
     mainFrame.Visible = true
     mainFrame.Size = UDim2.new(0, 0, 0, 0)
@@ -1048,7 +1061,6 @@ closeBtn.MouseButton1Click:Connect(function()
     closeMenu()
 end)
 
--- ===== DRAG =====
 local dragging = false
 local dragStart, startPos
 
@@ -1097,11 +1109,9 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- ===== INIT =====
 loadConfig()
 refreshAllButtons()
 
--- Выбор команды
 task.spawn(function()
     task.wait(1)
     selectTeam()
