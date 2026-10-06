@@ -282,11 +282,11 @@ local function TryStoreFruit()
     if not backpack then return false end
     local tool = nil
     for _, child in ipairs(char:GetChildren()) do
-        if child:IsA("Tool") and IsFruitName(child.Name) then tool = child break end
+        if child:IsA("Tool") then tool = child break end
     end
     if not tool then
         for _, child in ipairs(backpack:GetChildren()) do
-            if child:IsA("Tool") and IsFruitName(child.Name) then tool = child break end
+            if child:IsA("Tool") then tool = child break end
         end
     end
     if not tool then return false end
@@ -305,7 +305,7 @@ local function ServerHop()
         local response = game:HttpGet(url)
         local data = HttpService:JSONDecode(response)
         local servers = {}
-        for _, s in ipairs(data.data) do
+        for _, s in ipairs(data.servers or data.data or {}) do
             if s.id ~= game.JobId and s.playing < s.maxPlayers then
                 table.insert(servers, s.id)
             end
@@ -646,32 +646,39 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- АВТО-СТОР: каждую секунду проверяет руки + рюкзак и сохраняет
+-- АВТО-СТОР: перебирает все Tool и вызывает TryStoreFruit
 task.spawn(function()
-    while task.wait(1) do
+    while task.wait(0.5) do
         local char = LocalPlayer.Character
         if not char then continue end
         local backpack = LocalPlayer:FindFirstChild("Backpack")
         if not backpack then continue end
 
-        local hasFruit = false
+        local candidates = {}
         for _, child in ipairs(char:GetChildren()) do
-            if child:IsA("Tool") and IsFruitName(child.Name) then
-                hasFruit = true
-                break
-            end
+            if child:IsA("Tool") then table.insert(candidates, child) end
         end
-        if not hasFruit then
-            for _, child in ipairs(backpack:GetChildren()) do
-                if child:IsA("Tool") and IsFruitName(child.Name) then
-                    hasFruit = true
-                    break
-                end
-            end
+        for _, child in ipairs(backpack:GetChildren()) do
+            if child:IsA("Tool") then table.insert(candidates, child) end
         end
 
-        if hasFruit then
-            TryStoreFruit()
+        for _, tool in ipairs(candidates) do
+            local name = tool.Name:lower()
+            local isFruit = name:find("fruit", 1, true) ~= nil
+            if not isFruit then
+                for fname, _ in pairs(FRUIT_CODES) do
+                    local base = fname:lower():gsub(" fruit","")
+                    if name == fname:lower() or name == base then
+                        isFruit = true
+                        break
+                    end
+                end
+            end
+
+            if isFruit then
+                TryStoreFruit()
+                break
+            end
         end
     end
 end)
