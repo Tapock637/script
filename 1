@@ -125,9 +125,17 @@ local function saveConfig()
 end
 
 local function IsTeamSelected()
+    -- Проверяем через Player.Team
+    if LocalPlayer.Team ~= nil and LocalPlayer.Team.Name ~= "" then
+        return true
+    end
+    -- Проверяем через Data.Team
     local data = LocalPlayer:FindFirstChild("Data")
-    if data and data:FindFirstChild("Team") then
-        return data.Team.Value ~= "" and data.Team.Value ~= nil
+    if data then
+        local team = data:FindFirstChild("Team")
+        if team and team.Value ~= "" then
+            return true
+        end
     end
     return false
 end
@@ -135,7 +143,10 @@ end
 local function selectTeam()
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
     local commF = remotes and remotes:FindFirstChild("CommF_")
-    if not commF then return false end
+    if not commF then
+        notify("CommF_ not found", Color3.fromRGB(255, 100, 100))
+        return false
+    end
 
     local ok, result = pcall(function()
         return commF:InvokeServer("SetTeam", CONFIG.Team)
@@ -525,7 +536,10 @@ local function StartFly()
     if not hrp then return end
 
     local target = GetNearestFruit()
-    if not target then return end
+    if not target then
+        notify("No fruit to fly to", Color3.fromRGB(255, 160, 60))
+        return
+    end
 
     FlyActive = true
     SetCharacterCollision(false)
@@ -542,6 +556,7 @@ local function StartFly()
     FlyConnection = RunService.Heartbeat:Connect(function(dt)
         if not FlyActive then
             if FlyConnection then FlyConnection:Disconnect() end
+            bodyVelocity:Destroy()
             return
         end
 
@@ -609,7 +624,10 @@ local function StartRun()
     if not hrp or not hum then return end
 
     local target = GetNearestFruit()
-    if not target then return end
+    if not target then
+        notify("No fruit to run to", Color3.fromRGB(255, 160, 60))
+        return
+    end
 
     RunActive = true
 
@@ -625,12 +643,14 @@ local function StartRun()
             local t = GetNearestFruit()
             if not t then
                 StopRun()
+                notify("No fruit found", Color3.fromRGB(255, 160, 60))
                 return
             end
 
             local dist = (t.Position - currentHrp.Position).Magnitude
             if dist <= 4 then
                 StopRun()
+                notify("Arrived at fruit", Color3.fromRGB(100, 255, 120))
                 return
             end
 
@@ -709,7 +729,10 @@ local function StartCafeWalk()
     if not hrp or not hum then return end
 
     local cafePart = FindCafePosition()
-    if not cafePart then return end
+    if not cafePart then
+        notify("Cafe not found", Color3.fromRGB(255, 160, 60))
+        return
+    end
 
     CafeWalkActive = true
 
@@ -726,6 +749,7 @@ local function StartCafeWalk()
                 cafePart = FindCafePosition()
                 if not cafePart then
                     StopCafeWalk()
+                    notify("Cafe lost", Color3.fromRGB(255, 160, 60))
                     return
                 end
             end
@@ -733,6 +757,7 @@ local function StartCafeWalk()
             local dist = (cafePart.Position - currentHrp.Position).Magnitude
             if dist <= 6 then
                 StopCafeWalk()
+                notify("Arrived at cafe", Color3.fromRGB(100, 255, 120))
                 return
             end
 
@@ -797,6 +822,7 @@ end
 local function StartAutoFruit()
     if AutoFruitActive then return true end
 
+    -- Проверка команды
     if not IsTeamSelected() then
         notify("Selecting team " .. CONFIG.Team .. "...", Color3.fromRGB(255, 200, 100))
         local ok = selectTeam()
@@ -821,40 +847,47 @@ local function StartAutoFruit()
         local notifiedWaiting = false
 
         while AutoFruitActive do
-            task.wait(0.5)
+            local success, err = pcall(function()
+                task.wait(0.5)
 
-            local now = tick()
-            local dt = now - lastCheck
-            lastCheck = now
+                local now = tick()
+                local dt = now - lastCheck
+                lastCheck = now
 
-            if HasAnyFruit() then
-                noFruitTimer = 0
-                notifiedWaiting = false
+                if HasAnyFruit() then
+                    noFruitTimer = 0
+                    notifiedWaiting = false
 
-                if not FlyActive then
-                    local fruit = GetNearestFruit()
-                    if fruit then
-                        StartFly()
+                    if not FlyActive then
+                        local fruit = GetNearestFruit()
+                        if fruit then
+                            StartFly()
+                        end
+                    end
+                else
+                    noFruitTimer = noFruitTimer + dt
+
+                    if not notifiedWaiting and noFruitTimer > 1 then
+                        notify("Waiting for fruit...", Color3.fromRGB(255, 200, 100))
+                        notifiedWaiting = true
+                    end
+
+                    if noFruitTimer >= CONFIG.FruitLostDelay then
+                        if FlyActive then
+                            StopFly()
+                        end
+                        notify("Fruit lost. Storing + hopping...", Color3.fromRGB(255, 160, 60))
+                        TryStoreFruit()
+                        task.wait(CONFIG.ServerHopDelay)
+                        ServerHop()
+                        return
                     end
                 end
-            else
-                noFruitTimer = noFruitTimer + dt
+            end)
 
-                if not notifiedWaiting and noFruitTimer > 1 then
-                    notify("Waiting for fruit...", Color3.fromRGB(255, 200, 100))
-                    notifiedWaiting = true
-                end
-
-                if noFruitTimer >= CONFIG.FruitLostDelay then
-                    if FlyActive then
-                        StopFly()
-                    end
-                    notify("Fruit lost. Storing + hopping...", Color3.fromRGB(255, 160, 60))
-                    TryStoreFruit()
-                    task.wait(CONFIG.ServerHopDelay)
-                    ServerHop()
-                    return
-                end
+            if not success then
+                notify("Auto Fruit Error: " .. tostring(err), Color3.fromRGB(255, 100, 100))
+                task.wait(1)
             end
         end
     end)
