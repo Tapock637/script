@@ -25,7 +25,7 @@ local CONFIG = {
     FruitLostDelay = 3,
     Team = "Marines",
     FlySpeed = 100,
-    ReachDistance = 2,
+    ReachDistance = 3,
 }
 
 local FRUIT_CODES = {
@@ -107,10 +107,22 @@ local function IsNpc(inst)
     return false
 end
 
+local function IsInsideCharacter(inst)
+    local p = inst.Parent
+    while p do
+        if p:IsA("Model") and p:FindFirstChildOfClass("Humanoid") then
+            return true
+        end
+        p = p.Parent
+    end
+    return false
+end
+
 local function IsFruitRelated(inst)
     if IsNpc(inst) then return false end
     if not (inst:IsA("Tool") or inst:IsA("Model")) then return false end
     if not IsFruitName(inst.Name) then return false end
+    if IsInsideCharacter(inst) then return false end
     if inst:IsA("Model") and not inst:FindFirstChildWhichIsA("BasePart", true) then
         return false
     end
@@ -254,6 +266,19 @@ local function SetCollision(enabled)
     if hrp then hrp.CanCollide = enabled end
 end
 
+local function UnequipAllTools()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return end
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA("Tool") then
+            hum:UnequipTools()
+            break
+        end
+    end
+end
+
 local function IsTeamSelected()
     if LocalPlayer.Team ~= nil and LocalPlayer.Team.Name ~= "" then
         return true
@@ -305,7 +330,7 @@ local function ServerHop()
         local response = game:HttpGet(url)
         local data = HttpService:JSONDecode(response)
         local servers = {}
-        for _, s in ipairs(data.servers or data.data or {}) do
+        for _, s in ipairs(data.data or {}) do
             if s.id ~= game.JobId and s.playing < s.maxPlayers then
                 table.insert(servers, s.id)
             end
@@ -348,6 +373,8 @@ local function StartAutoFruit()
         local target = GetNearestFruit()
         if not target then
             SetCollision(true)
+            local bv = hrp:FindFirstChildOfClass("BodyVelocity")
+            if bv then bv:Destroy() end
             return
         end
 
@@ -389,6 +416,8 @@ local function StartAutoFruit()
             else
                 emptyTimer = emptyTimer + dt
                 if emptyTimer >= CONFIG.FruitLostDelay then
+                    UnequipAllTools()
+                    task.wait(0.3)
                     TryStoreFruit()
                     task.wait(CONFIG.ServerHopDelay)
                     ServerHop()
@@ -646,7 +675,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- АВТО-СТОР: перебирает все Tool и вызывает TryStoreFruit
+-- АВТО-СТОР: снимает всё из рук, затем сохраняет
 task.spawn(function()
     while task.wait(0.5) do
         local char = LocalPlayer.Character
@@ -654,6 +683,10 @@ task.spawn(function()
         local backpack = LocalPlayer:FindFirstChild("Backpack")
         if not backpack then continue end
 
+        -- 1. Снимаем всё из рук, чтобы ESP не видел фрукт в руке
+        UnequipAllTools()
+
+        -- 2. Ищем любой Tool с фруктом и сохраняем
         local candidates = {}
         for _, child in ipairs(char:GetChildren()) do
             if child:IsA("Tool") then table.insert(candidates, child) end
