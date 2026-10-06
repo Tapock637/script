@@ -326,24 +326,39 @@ local function TryStoreFruit()
     end)
 end
 
+-- ================= ИСПРАВЛЕННЫЙ SERVER HOP =================
 local function ServerHop()
-    pcall(function()
-        local url = "https://games.roblox.com/v1/games/" .. CONFIG.PlaceId .. "/servers/Public?limit=100"
-        local response = game:HttpGet(url)
-        local data = HttpService:JSONDecode(response)
-        local servers = {}
-        for _, s in ipairs(data.data or {}) do
-            if s.id ~= game.JobId and s.playing < s.maxPlayers then
-                table.insert(servers, s.id)
+    local servers = {}
+    local cursor = ""
+    
+    local success, response = pcall(function()
+        return HttpService:JSONDecode(game:HttpGet(
+            "https://games.roblox.com/v1/games/" .. CONFIG.PlaceId .. 
+            "/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true" .. 
+            (cursor ~= "" and ("&cursor=" .. cursor) or "")
+        ))
+    end)
+    
+    if success and response and response.data then
+        for _, server in ipairs(response.data) do
+            if server.id ~= game.JobId and server.playing < server.maxPlayers then
+                table.insert(servers, server.id)
             end
         end
-        if #servers > 0 then
-            TeleportService:TeleportToPlaceInstance(CONFIG.PlaceId, servers[math.random(1, #servers)], LocalPlayer)
-        else
+    end
+    
+    if #servers > 0 then
+        local randomServer = servers[math.random(1, #servers)]
+        pcall(function()
+            TeleportService:TeleportToPlaceInstance(CONFIG.PlaceId, randomServer, LocalPlayer)
+        end)
+    else
+        pcall(function()
             TeleportService:Teleport(CONFIG.PlaceId, LocalPlayer)
-        end
-    end)
+        end)
+    end
 end
+-- ============================================================
 
 local function StopAutoFruit()
     AutoFruitActive = false
