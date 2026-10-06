@@ -4,6 +4,7 @@ local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
+local PathfindingService = game:GetService("PathfindingService")
 
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then
@@ -40,14 +41,13 @@ local State = {
 
 local Tracked = {}
 local PlayerESP = {}
-local HandFruits = {}
 
 local FlyActive = false
 local RunActive = false
 local CafeWalkActive = false
 local FlyConnection = nil
-local RunConnection = nil
-local CafeConnection = nil
+local RunThread = nil
+local CafeThread = nil
 
 local function BuildLookup()
     local set = {}
@@ -61,13 +61,7 @@ local FruitLookup = BuildLookup()
 
 local function HasFruitName(str)
     if type(str) ~= "string" then return false end
-    local lower = str:lower()
-    for name in pairs(FruitLookup) do
-        if lower:find(name, 1, true) then
-            return true
-        end
-    end
-    return false
+    return FruitLookup[str:lower()] == true
 end
 
 local function IsNpc(inst)
@@ -79,8 +73,17 @@ end
 local function IsFruitRelated(inst)
     if IsNpc(inst) then return false end
     if not (inst:IsA("Tool") or inst:IsA("Model")) then return false end
-    if HasFruitName(inst.Name) then return true end
-    return false
+    if not HasFruitName(inst.Name) then return false end
+
+    if inst:IsA("Model") then
+        local handle = inst:FindFirstChild("Handle")
+        if not handle then
+            local hasPart = inst:FindFirstChildWhichIsA("BasePart", true)
+            if not hasPart then return false end
+        end
+    end
+
+    return true
 end
 
 local function GetSize(adornee)
@@ -182,76 +185,6 @@ local function ScanFruits()
             TryTrackFruit(inst)
         end
     end
-end
-
-local function ClearHandFruit(inst)
-    local data = HandFruits[inst]
-    if not data then return end
-    if data.Gui then data.Gui:Destroy() end
-    if data.Highlight then data.Highlight:Destroy() end
-    HandFruits[inst] = nil
-end
-
-local function TryTrackHandFruit(inst)
-    if HandFruits[inst] then return end
-    if not inst:IsA("Tool") then return end
-    if not HasFruitName(inst.Name) then return end
-
-    local adornee = inst:FindFirstChild("Handle")
-    if not adornee or not adornee:IsA("BasePart") then
-        adornee = inst:FindFirstChildWhichIsA("BasePart", true)
-    end
-    if not adornee then return end
-
-    local name = inst.Name .. " [HAND]"
-    local bb, label = CreateBillboard(adornee, name, CONFIG.FruitColor, UDim2.new(0, 260, 0, 40))
-    local hl = CreateOutline(adornee, CONFIG.FruitColor)
-
-    HandFruits[inst] = {
-        Gui = bb,
-        Label = label,
-        Highlight = hl,
-        Adornee = adornee,
-        Name = name,
-    }
-end
-
-local function ScanHandFruits()
-    for _, player in ipairs(Players:GetPlayers()) do
-        local char = player.Character
-        if char then
-            for _, child in ipairs(char:GetChildren()) do
-                if child:IsA("Tool") then
-                    TryTrackHandFruit(child)
-                end
-            end
-        end
-    end
-end
-
-local function WatchPlayerHands(player)
-    local function onChar(char)
-        char.ChildAdded:Connect(function(child)
-            if child:IsA("Tool") then
-                task.defer(TryTrackHandFruit, child)
-            end
-        end)
-        char.ChildRemoved:Connect(function(child)
-            if child:IsA("Tool") then
-                ClearHandFruit(child)
-            end
-        end)
-        for _, child in ipairs(char:GetChildren()) do
-            if child:IsA("Tool") then
-                task.defer(TryTrackHandFruit, child)
-            end
-        end
-    end
-
-    if player.Character then
-        onChar(player.Character)
-    end
-    player.CharacterAdded:Connect(onChar)
 end
 
 local function ApplyPlayerESP(player, isLocal)
@@ -413,6 +346,8 @@ local function notify(text, color)
     end)
 end
 
+-- ================= FLY =================
+
 local function StopFly()
     FlyActive = false
     if FlyConnection then
@@ -478,11 +413,20 @@ local function StartFly()
     end)
 end
 
+-- ================= LEGIT RUN (Pathfinding + MoveTo) =================
+
 local function StopRun()
     RunActive = false
-    if RunConnection then
-        RunConnection:Disconnect()
-        RunConnection = nil
+    if RunThread then
+        task.cancel(RunThread)
+        RunThread = nil
+    end
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum:MoveTo(char.HumanoidRootPart.Position)
+        end
     end
 end
 
@@ -503,95 +447,93 @@ local function StartRun()
     end
 
     RunActive = true
-    local lastJump = 0
-    local jumpSpam = false
-    local spamUntil = 0
 
-    RunConnection = RunService.Heartbeat:Connect(function(dt)
-        if not RunActive then
-            if RunConnection then RunConnection:Disconnect() end
-            return
-        end
+    RunThread = task.spawn(function()
+        while RunActive do
+            local c = LocalPlayer.Character
+            if not c then StopRun() return end
 
-        local c = LocalPlayer.Character
-        if not c then return end
+            local currentHrp = c:FindFirstChild("HumanoidRootPart")
+            local currentHum = c:FindFirstChildOfClass("Humanoid")
+            if not currentHrp or not currentHum then StopRun() return end
 
-        local currentHrp = c:FindFirstChild("HumanoidRootPart")
-        local currentHum = c:FindFirstChildOfClass("Humanoid")
-        if not currentHrp or not currentHum then return end
-
-        local t = GetNearestFruit()
-        if not t then
-            StopRun()
-            notify("NO FRUIT FOUND", Color3.fromRGB(255, 160, 60))
-            return
-        end
-
-        local targetPos = t.Position
-        local myPos = currentHrp.Position
-        local dir = (targetPos - myPos)
-
-        if dir.Magnitude <= 4 then
-            StopRun()
-            notify("ARRIVED", Color3.fromRGB(100, 255, 120))
-            return
-        end
-
-        local now = tick()
-        local currentHealth = currentHum.Health
-        if currentHum:GetAttribute("LastHealth") then
-            local lastHealth = currentHum:GetAttribute("LastHealth")
-            if currentHealth < lastHealth then
-                jumpSpam = true
-                spamUntil = now + 1.5
+            local t = GetNearestFruit()
+            if not t then
+                StopRun()
+                notify("NO FRUIT FOUND", Color3.fromRGB(255, 160, 60))
+                return
             end
-        end
-        currentHum:SetAttribute("LastHealth", currentHealth)
 
-        local flatDir = Vector3.new(dir.X, 0, dir.Z)
-        if flatDir.Magnitude > 0 then
-            flatDir = flatDir.Unit
-            local move = flatDir * currentHum.WalkSpeed * dt
-            currentHrp.CFrame = currentHrp.CFrame + move
-        end
+            local dist = (t.Position - currentHrp.Position).Magnitude
+            if dist <= 4 then
+                StopRun()
+                notify("ARRIVED", Color3.fromRGB(100, 255, 120))
+                return
+            end
 
-        local rayOrigin = currentHrp.Position
-        local rayDir = flatDir * 5
-        local rayParams = RaycastParams.new()
-        rayParams.FilterType = Enum.RaycastFilterType.Exclude
-        rayParams.FilterDescendantsInstances = {c}
+            local path = PathfindingService:CreatePath({
+                AgentRadius = 2,
+                AgentHeight = 5,
+                AgentCanJump = true,
+                AgentCanClimb = true,
+                WaypointSpacing = 4,
+            })
 
-        local rayResult = workspace:Raycast(rayOrigin, rayDir, rayParams)
-        local wallBlocked = rayResult ~= nil
+            local success = pcall(function()
+                path:ComputeAsync(currentHrp.Position, t.Position)
+            end)
 
-        local downRay = workspace:Raycast(rayOrigin, Vector3.new(0, -10, 0), rayParams)
-        local voidAhead = downRay == nil
+            if success and path.Status == Enum.PathStatus.Success then
+                local waypoints = path:GetWaypoints()
+                for _, wp in ipairs(waypoints) do
+                    if not RunActive then return end
+                    if wp.Action == Enum.PathWaypointAction.Jump then
+                        currentHum.Jump = true
+                    end
+                    currentHum:MoveTo(wp.Position)
+                    local wpReached = false
+                    local timeout = tick() + 4
+                    repeat
+                        task.wait(0.1)
+                        if not RunActive then return end
+                        if not currentHrp.Parent then StopRun() return end
+                        local d = (currentHrp.Position - wp.Position).Magnitude
+                        if d < 3 then wpReached = true end
+                        if tick() > timeout then wpReached = true end
+                    until wpReached
+                end
+            else
+                currentHum:MoveTo(t.Position)
+                local timeout = tick() + 3
+                repeat
+                    task.wait(0.1)
+                    if not RunActive then return end
+                    if not currentHrp.Parent then StopRun() return end
+                    local d = (t.Position - currentHrp.Position).Magnitude
+                    if d < 4 then break end
+                    if tick() > timeout then break end
+                until false
+            end
 
-        local shouldJump = false
-
-        if wallBlocked then shouldJump = true end
-        if voidAhead and (now - lastJump >= 1) then shouldJump = true end
-        if jumpSpam and now < spamUntil then shouldJump = true else jumpSpam = false end
-
-        if shouldJump then
-            currentHum.Jump = true
-            lastJump = now
+            task.wait(0.2)
         end
     end)
 end
 
+-- ================= CAFE WALK (Pathfinding + MoveTo) =================
+
 local function StopCafeWalk()
     CafeWalkActive = false
+    if CafeThread then
+        task.cancel(CafeThread)
+        CafeThread = nil
+    end
     local char = LocalPlayer.Character
     if char then
         local hum = char:FindFirstChildOfClass("Humanoid")
         if hum then
             hum:MoveTo(char.HumanoidRootPart.Position)
         end
-    end
-    if CafeConnection then
-        CafeConnection:Disconnect()
-        CafeConnection = nil
     end
 end
 
@@ -612,69 +554,82 @@ local function StartCafeWalk()
     end
 
     CafeWalkActive = true
-    local lastJump = 0
 
-    CafeConnection = RunService.Heartbeat:Connect(function(dt)
-        if not CafeWalkActive then
-            if CafeConnection then CafeConnection:Disconnect() end
-            return
-        end
+    CafeThread = task.spawn(function()
+        while CafeWalkActive do
+            local c = LocalPlayer.Character
+            if not c then StopCafeWalk() return end
 
-        local c = LocalPlayer.Character
-        if not c then StopCafeWalk() return end
+            local currentHrp = c:FindFirstChild("HumanoidRootPart")
+            local currentHum = c:FindFirstChildOfClass("Humanoid")
+            if not currentHrp or not currentHum then StopCafeWalk() return end
 
-        local currentHrp = c:FindFirstChild("HumanoidRootPart")
-        local currentHum = c:FindFirstChildOfClass("Humanoid")
-        if not currentHrp or not currentHum then StopCafeWalk() return end
+            if not cafePart or not cafePart.Parent then
+                cafePart = FindCafePosition()
+                if not cafePart then
+                    StopCafeWalk()
+                    notify("CAFE LOST", Color3.fromRGB(255, 160, 60))
+                    return
+                end
+            end
 
-        if not cafePart or not cafePart.Parent then
-            cafePart = FindCafePosition()
-            if not cafePart then
+            local dist = (cafePart.Position - currentHrp.Position).Magnitude
+            if dist <= 6 then
                 StopCafeWalk()
-                notify("CAFE LOST", Color3.fromRGB(255, 160, 60))
+                notify("ARRIVED AT CAFE", Color3.fromRGB(100, 255, 120))
                 return
             end
-        end
 
-        local targetPos = cafePart.Position
-        local myPos = currentHrp.Position
-        local dir = (targetPos - myPos)
+            local path = PathfindingService:CreatePath({
+                AgentRadius = 2,
+                AgentHeight = 5,
+                AgentCanJump = true,
+                AgentCanClimb = true,
+                WaypointSpacing = 4,
+            })
 
-        if dir.Magnitude <= 6 then
-            StopCafeWalk()
-            notify("ARRIVED AT CAFE", Color3.fromRGB(100, 255, 120))
-            return
-        end
+            local success = pcall(function()
+                path:ComputeAsync(currentHrp.Position, cafePart.Position)
+            end)
 
-        local now = tick()
-        local flatDir = Vector3.new(dir.X, 0, dir.Z)
+            if success and path.Status == Enum.PathStatus.Success then
+                local waypoints = path:GetWaypoints()
+                for _, wp in ipairs(waypoints) do
+                    if not CafeWalkActive then return end
+                    if wp.Action == Enum.PathWaypointAction.Jump then
+                        currentHum.Jump = true
+                    end
+                    currentHum:MoveTo(wp.Position)
+                    local wpReached = false
+                    local timeout = tick() + 4
+                    repeat
+                        task.wait(0.1)
+                        if not CafeWalkActive then return end
+                        if not currentHrp.Parent then StopCafeWalk() return end
+                        local d = (currentHrp.Position - wp.Position).Magnitude
+                        if d < 3 then wpReached = true end
+                        if tick() > timeout then wpReached = true end
+                    until wpReached
+                end
+            else
+                currentHum:MoveTo(cafePart.Position)
+                local timeout = tick() + 3
+                repeat
+                    task.wait(0.1)
+                    if not CafeWalkActive then return end
+                    if not currentHrp.Parent then StopCafeWalk() return end
+                    local d = (cafePart.Position - currentHrp.Position).Magnitude
+                    if d < 6 then break end
+                    if tick() > timeout then break end
+                until false
+            end
 
-        if flatDir.Magnitude > 0 then
-            flatDir = flatDir.Unit
-            local move = flatDir * currentHum.WalkSpeed * dt
-            currentHrp.CFrame = currentHrp.CFrame + flatDir * currentHum.WalkSpeed * dt
-        end
-
-        local rayOrigin = currentHrp.Position
-        local rayParams = RaycastParams.new()
-        rayParams.FilterType = Enum.RaycastFilterType.Exclude
-        rayParams.FilterDescendantsInstances = {c}
-
-        local downRay = workspace:Raycast(rayOrigin, Vector3.new(0, -10, 0), rayParams)
-        local voidAhead = downRay == nil
-
-        local shouldJump = false
-
-        if voidAhead and (now - lastJump >= 1) then
-            shouldJump = true
-        end
-
-        if shouldJump then
-            currentHum.Jump = true
-            lastJump = now
+            task.wait(0.2)
         end
     end)
 end
+
+-- ================= UI =================
 
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "Main"
@@ -716,7 +671,7 @@ titleLine.BackgroundTransparency = 0.5
 titleLine.BorderSizePixel = 0
 titleLine.Parent = mainFrame
 
-local function makeButton(text, posY, color)
+local function makeButton(text, posY)
     local btn = Instance.new("TextButton")
     btn.Name = text:gsub("%s", "")
     btn.Size = UDim2.new(1, -24, 0, 34)
@@ -738,11 +693,11 @@ local function makeButton(text, posY, color)
     return btn
 end
 
-local fruitBtn = makeButton("See Fruits", 46, CONFIG.FruitColor)
-local playerBtn = makeButton("See Players", 86, CONFIG.PlayerColor)
-local flyBtn = makeButton("Fly to Fruit", 126, Color3.fromRGB(100, 200, 255))
-local runBtn = makeButton("Legit Run", 166, Color3.fromRGB(100, 255, 120))
-local cafeBtn = makeButton("Test Walk to Cafe", 206, Color3.fromRGB(255, 200, 100))
+local fruitBtn = makeButton("See Fruits", 46)
+local playerBtn = makeButton("See Players", 86)
+local flyBtn = makeButton("Fly to Fruit", 126)
+local runBtn = makeButton("Legit Run", 166)
+local cafeBtn = makeButton("Test Walk to Cafe", 206)
 
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0, 26, 0, 26)
@@ -785,7 +740,7 @@ toggleStroke.Thickness = 1
 toggleStroke.Transparency = 0.6
 toggleStroke.Parent = toggleBtn
 
-local function updateButtonVisual(btn, enabled, color)
+local function refreshButton(btn, text, enabled, color)
     if enabled then
         btn.TextColor3 = color
         btn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
@@ -793,10 +748,6 @@ local function updateButtonVisual(btn, enabled, color)
         btn.TextColor3 = Color3.fromRGB(140, 140, 140)
         btn.BackgroundColor3 = Color3.fromRGB(30, 30, 36)
     end
-end
-
-local function refreshButton(btn, text, enabled, color)
-    updateButtonVisual(btn, enabled, color)
     btn.Text = (enabled and "●  " or "○  ") .. text
 end
 
@@ -812,10 +763,6 @@ refreshAllButtons()
 
 local function setFruitVisibility(v)
     for _, data in pairs(Tracked) do
-        if data.Gui then data.Gui.Enabled = v end
-        if data.Highlight then data.Highlight.Enabled = v end
-    end
-    for _, data in pairs(HandFruits) do
         if data.Gui then data.Gui.Enabled = v end
         if data.Highlight then data.Highlight.Enabled = v end
     end
@@ -940,13 +887,13 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
+-- ================= ЗАПУСК =================
+
 ScanFruits()
-ScanHandFruits()
 
 task.spawn(function()
     while task.wait(CONFIG.ScanInterval) do
         ScanFruits()
-        ScanHandFruits()
     end
 end)
 
@@ -964,12 +911,10 @@ end)
 
 for _, player in ipairs(Players:GetPlayers()) do
     ApplyPlayerESP(player, player == LocalPlayer)
-    WatchPlayerHands(player)
 end
 
 Players.PlayerAdded:Connect(function(player)
     ApplyPlayerESP(player, false)
-    WatchPlayerHands(player)
 end)
 
 Players.PlayerRemoving:Connect(function(player)
@@ -988,36 +933,6 @@ RunService.RenderStepped:Connect(function()
     for inst, data in pairs(Tracked) do
         if not inst.Parent or not data.Adornee or not data.Adornee.Parent then
             RemoveFruit(inst)
-            continue
-        end
-
-        local dist = (data.Adornee.Position - myPos).Magnitude
-
-        if CONFIG.MinDistance > 0 and dist < CONFIG.MinDistance then
-            data.Gui.Enabled = false
-            if data.Highlight then data.Highlight.Enabled = false end
-        elseif CONFIG.MaxDistance > 0 and dist > CONFIG.MaxDistance then
-            data.Gui.Enabled = false
-            if data.Highlight then data.Highlight.Enabled = false end
-        else
-            if State.ShowFruits then
-                data.Gui.Enabled = true
-                if data.Highlight then data.Highlight.Enabled = true end
-                if CONFIG.ShowDistance then
-                    data.Label.Text = string.format("%s\n[%d studs]", data.Name, math.floor(dist))
-                else
-                    data.Label.Text = data.Name
-                end
-            else
-                data.Gui.Enabled = false
-                if data.Highlight then data.Highlight.Enabled = false end
-            end
-        end
-    end
-
-    for inst, data in pairs(HandFruits) do
-        if not inst.Parent or not data.Adornee or not data.Adornee.Parent then
-            ClearHandFruit(inst)
             continue
         end
 
@@ -1084,12 +999,6 @@ task.spawn(function()
     for _ in pairs(Tracked) do
         found = true
         break
-    end
-    if not found then
-        for _ in pairs(HandFruits) do
-            found = true
-            break
-        end
     end
     if found then
         notify("FRUIT FOUND", CONFIG.FruitColor)
