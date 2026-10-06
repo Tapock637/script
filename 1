@@ -31,6 +31,8 @@ local CONFIG = {
     ServerHopDelay = 2,
     FruitLostDelay = 3,
     Team = "Marines",
+    FlySpeed = 100,
+    ReachDistance = 5,
 }
 
 local FRUIT_CODES = {
@@ -99,7 +101,6 @@ local FlyConnection = nil
 local RunThread = nil
 local CafeThread = nil
 local AutoThread = nil
-local AutoFlyConnection = nil
 
 local function loadConfig()
     if not (isfile and readfile) then return end
@@ -484,11 +485,13 @@ local function StartFly()
     if not target then return end
     FlyActive = true
     SetCharacterCollision(false)
-    local speed = 100
-    local reachDist = 4
+    local bv = Instance.new("BodyVelocity")
+    bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    bv.Velocity = Vector3.new(0, 0, 0)
+    bv.Parent = hrp
     FlyConnection = RunService.Heartbeat:Connect(function(dt)
         if not FlyActive then
-            if FlyConnection then FlyConnection:Disconnect() end
+            if bv then bv:Destroy() end
             return
         end
         local c = LocalPlayer.Character
@@ -500,13 +503,11 @@ local function StartFly()
             if not target then StopFly() return end
         end
         local dir = target.Position - currentHrp.Position
-        if dir.Magnitude <= reachDist then
+        if dir.Magnitude <= CONFIG.ReachDistance then
             StopFly()
             return
         end
-        dir = dir.Unit
-        currentHrp.CFrame = currentHrp.CFrame + dir * speed * dt
-        currentHrp.Velocity = Vector3.new(0, 0, 0)
+        bv.Velocity = dir.Unit * CONFIG.FlySpeed
     end)
 end
 
@@ -664,7 +665,7 @@ local function StartCafeWalk()
     end)
 end
 
--- === AUTO FRUIT с собственным Heartbeat ===
+-- === AUTO FRUIT with BodyVelocity ===
 
 local function StopAutoFruit()
     AutoFruitActive = false
@@ -672,9 +673,9 @@ local function StopAutoFruit()
         task.cancel(AutoThread)
         AutoThread = nil
     end
-    if AutoFlyConnection then
-        AutoFlyConnection:Disconnect()
-        AutoFlyConnection = nil
+    if FlyConnection then
+        FlyConnection:Disconnect()
+        FlyConnection = nil
     end
     SetCharacterCollision(true)
 end
@@ -696,7 +697,6 @@ local function StartAutoFruit()
     AutoFruitActive = true
     notify("Auto Fruit ON", Color3.fromRGB(100, 255, 120))
 
-    -- Свой Heartbeat для полёта
     local lastMove = 0
     AutoFlyConnection = RunService.Heartbeat:Connect(function(dt)
         if not AutoFruitActive then
@@ -711,24 +711,31 @@ local function StartAutoFruit()
 
         local target = GetNearestFruit()
         if not target then
+            if hrp:FindFirstChildOfClass("BodyVelocity") then
+                hrp:FindFirstChildOfClass("BodyVelocity"):Destroy()
+            end
             SetCharacterCollision(true)
             return
         end
 
         SetCharacterCollision(false)
 
+        if not hrp:FindFirstChildOfClass("BodyVelocity") then
+            local bv = Instance.new("BodyVelocity")
+            bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+            bv.Velocity = Vector3.new(0, 0, 0)
+            bv.Parent = hrp
+        end
+
+        local bv = hrp:FindFirstChildOfClass("BodyVelocity")
         local dir = target.Position - hrp.Position
-        if dir.Magnitude <= 4 then
+        if dir.Magnitude <= CONFIG.ReachDistance then
+            bv.Velocity = Vector3.new(0, 0, 0)
             return
         end
-        dir = dir.Unit
-        hrp.CFrame = hrp.CFrame + dir * 100 * dt
-        hrp.Velocity = Vector3.new(0, 0, 0)
-
-        lastMove = tick()
+        bv.Velocity = dir.Unit * CONFIG.FlySpeed
     end)
 
-    -- Логика слежения за фруктами и hop
     AutoThread = task.spawn(function()
         local emptyTimer = 0
         local lastCheck = tick()
