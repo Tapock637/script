@@ -25,7 +25,7 @@ local CONFIG = {
     FruitLostDelay = 3,
     Team = "Marines",
     FlySpeed = 100,
-    ReachDistance = 5,
+    ReachDistance = 2,
 }
 
 local FRUIT_CODES = {
@@ -377,6 +377,13 @@ local function StartAutoFruit()
             local now = tick()
             local dt = now - lastCheck
             lastCheck = now
+
+            for inst, data in pairs(Tracked) do
+                if not inst.Parent or not data.Adornee or not data.Adornee.Parent then
+                    RemoveFruit(inst)
+                end
+            end
+
             if HasAnyFruit() then
                 emptyTimer = 0
             else
@@ -635,6 +642,36 @@ RunService.RenderStepped:Connect(function()
         else
             data.Gui.Enabled = false
             if data.Highlight then data.Highlight.Enabled = false end
+        end
+    end
+end)
+
+-- АВТО-СТОР: каждую секунду проверяет руки + рюкзак и сохраняет
+task.spawn(function()
+    while task.wait(1) do
+        local char = LocalPlayer.Character
+        if not char then continue end
+        local backpack = LocalPlayer:FindFirstChild("Backpack")
+        if not backpack then continue end
+
+        local hasFruit = false
+        for _, child in ipairs(char:GetChildren()) do
+            if child:IsA("Tool") and IsFruitName(child.Name) then
+                hasFruit = true
+                break
+            end
+        end
+        if not hasFruit then
+            for _, child in ipairs(backpack:GetChildren()) do
+                if child:IsA("Tool") and IsFruitName(child.Name) then
+                    hasFruit = true
+                    break
+                end
+            end
+        end
+
+        if hasFruit then
+            TryStoreFruit()
         end
     end
 end)
