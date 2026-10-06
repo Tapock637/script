@@ -9,13 +9,12 @@ if not LocalPlayer then
 end
 
 local FRUIT_NAMES = {
-    "Rocket", "Spin", "Blade", "Spring", "Bomb", "Smoke", "Spike",
     "Flame", "Ice", "Sand", "Dark", "Eagle", "Diamond", "Light",
     "Rubber", "Ghost", "Magma", "Quake", "Buddha", "Love", "Creation",
     "Spider", "Sound", "Phoenix", "Portal", "Lightning", "Pain", "Blizzard",
     "Gravity", "Mammoth", "T-Rex", "Dough", "Shadow", "Venom", "Gas",
     "Spirit", "Tiger", "Yeti", "Magnet", "Kitsune", "Control", "Dragon",
-    "Leopard", "Rumble", "Chop", "Kilo", "Revive", "Barrier", "Paw"
+    "Leopard", "Rumble", "Revive", "Barrier", "Paw"
 }
 
 local CONFIG = {
@@ -32,7 +31,6 @@ local CONFIG = {
 
 local Tracked = {}
 local PlayerESP = {}
-local MyESP = nil
 
 local function BuildLookup()
     local set = {}
@@ -48,14 +46,18 @@ local function HasFruitKeyword(str)
     if type(str) ~= "string" then return false end
     local lower = str:lower()
     if lower:find("fruit", 1, true) then return true end
-    if lower:find("blox fruit", 1, true) then return true end
     for name in pairs(FruitLookup) do
-        if lower:find(name, 1, true) then return true end
+        if lower == name then
+            return true
+        end
     end
     return false
 end
 
 local function IsFruitRelated(inst)
+    if not (inst:IsA("Tool") or inst:IsA("Model")) then
+        return false
+    end
     if HasFruitKeyword(inst.Name) then return true end
     for attrName, attrValue in pairs(inst:GetAttributes()) do
         if HasFruitKeyword(attrName) then return true end
@@ -68,23 +70,17 @@ local function IsFruitRelated(inst)
 end
 
 local function GetAdornee(inst)
-    if inst:IsA("BasePart") then
-        return inst
-    elseif inst:IsA("Model") then
-        if inst.PrimaryPart then
-            return inst.PrimaryPart
-        end
+    if inst:IsA("Model") then
+        if inst.PrimaryPart then return inst.PrimaryPart end
         local part = inst:FindFirstChildWhichIsA("BasePart", true)
         if part then
             inst.PrimaryPart = part
             return part
         end
         return nil
-    elseif inst:IsA("Tool") or inst:IsA("Accessory") then
+    elseif inst:IsA("Tool") then
         local handle = inst:FindFirstChild("Handle")
-        if handle and handle:IsA("BasePart") then
-            return handle
-        end
+        if handle and handle:IsA("BasePart") then return handle end
         return inst:FindFirstChildWhichIsA("BasePart", true)
     end
     return nil
@@ -136,7 +132,7 @@ local function TryTrackFruit(inst)
     local adornee = GetAdornee(inst)
     if not adornee then return end
 
-    local name = inst:GetFullName()
+    local name = inst.Name
     local bb, label = CreateBillboard(adornee, name, CONFIG.FruitColor)
     local hl = CreateOutline(adornee, CONFIG.FruitColor)
 
@@ -159,7 +155,7 @@ end
 
 local function ScanFruits()
     for _, inst in ipairs(Workspace:GetDescendants()) do
-        if inst:IsA("BasePart") or inst:IsA("Model") or inst:IsA("Tool") or inst:IsA("Accessory") then
+        if inst:IsA("Tool") or inst:IsA("Model") then
             TryTrackFruit(inst)
         end
     end
@@ -189,7 +185,6 @@ local function ApplyPlayerESP(player, isLocal)
             Label = label,
             Highlight = hl,
             Head = head,
-            HRP = hrp,
             BaseText = text,
         }
     end
@@ -201,15 +196,6 @@ local function ApplyPlayerESP(player, isLocal)
     player.CharacterAdded:Connect(function(char)
         task.wait(0.5)
         setupCharacter(char)
-    end)
-
-    player.CharacterRemoving:Connect(function()
-        local data = PlayerESP[player]
-        if data then
-            if data.Gui then data.Gui:Destroy() end
-            if data.Highlight then data.Highlight:Destroy() end
-            PlayerESP[player] = nil
-        end
     end)
 end
 
@@ -230,7 +216,7 @@ task.spawn(function()
 end)
 
 Workspace.DescendantAdded:Connect(function(inst)
-    if inst:IsA("BasePart") or inst:IsA("Model") or inst:IsA("Tool") or inst:IsA("Accessory") then
+    if inst:IsA("Tool") or inst:IsA("Model") then
         task.defer(TryTrackFruit, inst)
     end
 end)
