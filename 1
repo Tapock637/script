@@ -30,10 +30,8 @@ local CONFIG = {
     FruitColor = Color3.fromRGB(255, 60, 60),
     PlayerColor = Color3.fromRGB(60, 140, 255),
     MyColor = Color3.fromRGB(0, 200, 255),
-    StrokeColor = Color3.fromRGB(0, 0, 0),
     MaxSize = 8,
-    CafeName = "Cafe",
-    CafeKeywords = {"cafe", "rose", "kingdom"},
+    CafeKeywords = {"cafe", "café", "rose", "kingdom"},
 }
 
 local State = {
@@ -123,8 +121,7 @@ local function CreateBillboard(adornee, text, color, size)
     label.Font = Enum.Font.GothamBold
     label.TextSize = CONFIG.TextSize
     label.TextColor3 = color
-    label.TextStrokeTransparency = 0
-    label.TextStrokeColor3 = CONFIG.StrokeColor
+    label.TextStrokeTransparency = 1
     label.Text = text
     label.Parent = bb
 
@@ -268,8 +265,13 @@ local function FindCafePosition()
                 local pos = nil
                 if inst:IsA("BasePart") then
                     pos = inst.Position
-                elseif inst:IsA("Model") and inst.PrimaryPart then
-                    pos = inst.PrimaryPart.Position
+                elseif inst:IsA("Model") then
+                    if inst.PrimaryPart then
+                        pos = inst.PrimaryPart.Position
+                    else
+                        local part = inst:FindFirstChildWhichIsA("BasePart", true)
+                        if part then pos = part.Position end
+                    end
                 end
                 if pos then
                     local dist = (pos - myPos).Magnitude
@@ -284,7 +286,10 @@ local function FindCafePosition()
 
     if best then
         if best:IsA("BasePart") then return best
-        elseif best:IsA("Model") and best.PrimaryPart then return best.PrimaryPart end
+        elseif best:IsA("Model") then
+            if best.PrimaryPart then return best.PrimaryPart end
+            return best:FindFirstChildWhichIsA("BasePart", true)
+        end
     end
     return nil
 end
@@ -307,6 +312,7 @@ local function notify(text, color)
     box.Font = Enum.Font.GothamBold
     box.TextSize = 16
     box.TextColor3 = color or Color3.fromRGB(255, 255, 255)
+    box.TextStrokeTransparency = 1
     box.Text = text
     box.Parent = screenGui
 
@@ -339,24 +345,30 @@ end
 
 -- ================= FLY TO FRUIT =================
 
+local function StopFly()
+    FlyActive = false
+    if FlyConnection then
+        FlyConnection:Disconnect()
+        FlyConnection = nil
+    end
+end
+
 local function StartFly()
     if FlyActive then return end
-    FlyActive = true
 
-    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    if not hrp then
-        FlyActive = false
-        notify("NO CHARACTER", Color3.fromRGB(255, 160, 60))
-        return
-    end
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if not hrp then return end
 
     local target = GetNearestFruit()
     if not target then
         notify("NO FRUIT FOUND", Color3.fromRGB(255, 160, 60))
-        FlyActive = false
         return
     end
 
+    FlyActive = true
     local speed = 100
     local reachDist = 3
 
@@ -366,25 +378,22 @@ local function StartFly()
             return
         end
 
-        local char = LocalPlayer.Character
-        if not char then
-            FlyActive = false
-            if FlyConnection then FlyConnection:Disconnect() end
+        local c = LocalPlayer.Character
+        if not c then
+            StopFly()
             return
         end
 
-        local currentHrp = char:FindFirstChild("HumanoidRootPart")
+        local currentHrp = c:FindFirstChild("HumanoidRootPart")
         if not currentHrp then
-            FlyActive = false
-            if FlyConnection then FlyConnection:Disconnect() end
+            StopFly()
             return
         end
 
         if not target.Parent then
             target = GetNearestFruit()
             if not target then
-                FlyActive = false
-                if FlyConnection then FlyConnection:Disconnect() end
+                StopFly()
                 notify("TARGET LOST", Color3.fromRGB(255, 160, 60))
                 return
             end
@@ -395,8 +404,7 @@ local function StartFly()
         local dir = (targetPos - myPos)
 
         if dir.Magnitude <= reachDist then
-            FlyActive = false
-            if FlyConnection then FlyConnection:Disconnect() end
+            StopFly()
             notify("ARRIVED", Color3.fromRGB(100, 255, 120))
             return
         end
@@ -408,20 +416,33 @@ local function StartFly()
     end)
 end
 
-local function StopFly()
-    FlyActive = false
-    if FlyConnection then
-        FlyConnection:Disconnect()
-        FlyConnection = nil
+-- ================= LEGIT RUN =================
+
+local function StopRun()
+    RunActive = false
+    if RunConnection then
+        RunConnection:Disconnect()
+        RunConnection = nil
     end
 end
 
--- ================= LEGIT RUN =================
-
 local function StartRun()
     if RunActive then return end
-    RunActive = true
 
+    local char = LocalPlayer.Character
+    if not char then return end
+
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hrp or not hum then return end
+
+    local target = GetNearestFruit()
+    if not target then
+        notify("NO FRUIT FOUND", Color3.fromRGB(255, 160, 60))
+        return
+    end
+
+    RunActive = true
     local lastJump = 0
     local jumpSpam = false
     local spamUntil = 0
@@ -432,55 +453,53 @@ local function StartRun()
             return
         end
 
-        local char = LocalPlayer.Character
-        if not char then return end
+        local c = LocalPlayer.Character
+        if not c then return end
 
-        local hrp = char:FindFirstChild("HumanoidRootPart")
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if not hrp or not hum then return end
+        local currentHrp = c:FindFirstChild("HumanoidRootPart")
+        local currentHum = c:FindFirstChildOfClass("Humanoid")
+        if not currentHrp or not currentHum then return end
 
-        local target = GetNearestFruit()
-        if not target then
-            RunActive = false
-            if RunConnection then RunConnection:Disconnect() end
+        local t = GetNearestFruit()
+        if not t then
+            StopRun()
             notify("NO FRUIT FOUND", Color3.fromRGB(255, 160, 60))
             return
         end
 
-        local targetPos = target.Position
-        local myPos = hrp.Position
+        local targetPos = t.Position
+        local myPos = currentHrp.Position
         local dir = (targetPos - myPos)
 
         if dir.Magnitude <= 4 then
-            RunActive = false
-            if RunConnection then RunConnection:Disconnect() end
+            StopRun()
             notify("ARRIVED", Color3.fromRGB(100, 255, 120))
             return
         end
 
         local now = tick()
-        local currentHealth = hum.Health
-        if hum:GetAttribute("LastHealth") then
-            local lastHealth = hum:GetAttribute("LastHealth")
+        local currentHealth = currentHum.Health
+        if currentHum:GetAttribute("LastHealth") then
+            local lastHealth = currentHum:GetAttribute("LastHealth")
             if currentHealth < lastHealth then
                 jumpSpam = true
                 spamUntil = now + 1.5
             end
         end
-        hum:SetAttribute("LastHealth", currentHealth)
+        currentHum:SetAttribute("LastHealth", currentHealth)
 
         local flatDir = Vector3.new(dir.X, 0, dir.Z)
         if flatDir.Magnitude > 0 then
             flatDir = flatDir.Unit
-            local move = flatDir * hum.WalkSpeed * dt
-            hrp.CFrame = hrp.CFrame + move
+            local move = flatDir * currentHum.WalkSpeed * dt
+            currentHrp.CFrame = currentHrp.CFrame + move
         end
 
-        local rayOrigin = hrp.Position
+        local rayOrigin = currentHrp.Position
         local rayDir = flatDir * 5
         local rayParams = RaycastParams.new()
         rayParams.FilterType = Enum.RaycastFilterType.Exclude
-        rayParams.FilterDescendantsInstances = {char}
+        rayParams.FilterDescendantsInstances = {c}
 
         local rayResult = workspace:Raycast(rayOrigin, rayDir, rayParams)
         local wallBlocked = rayResult ~= nil
@@ -509,61 +528,78 @@ local function StartRun()
         end
 
         if shouldJump then
-            hum.Jump = true
+            currentHum.Jump = true
             lastJump = now
         end
     end)
 end
 
-local function StopRun()
-    RunActive = false
-    if RunConnection then
-        RunConnection:Disconnect()
-        RunConnection = nil
+-- ================= CAFE WALK =================
+
+local function StopCafeWalk()
+    CafeWalkActive = false
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum:MoveTo(char.HumanoidRootPart.Position)
+        end
+    end
+    if CafeConnection then
+        CafeConnection:Disconnect()
+        CafeConnection = nil
     end
 end
 
--- ================= CAFE WALK (Pathfinding) =================
-
 local function StartCafeWalk()
     if CafeWalkActive then return end
-    CafeWalkActive = true
 
     local char = LocalPlayer.Character
-    if not char then
-        CafeWalkActive = false
-        return
-    end
+    if not char then return end
 
     local hrp = char:FindFirstChild("HumanoidRootPart")
     local hum = char:FindFirstChildOfClass("Humanoid")
-    if not hrp or not hum then
-        CafeWalkActive = false
-        return
-    end
+    if not hrp or not hum then return end
 
     local cafePart = FindCafePosition()
     if not cafePart then
-        CafeWalkActive = false
         notify("CAFE NOT FOUND", Color3.fromRGB(255, 160, 60))
         return
     end
+
+    CafeWalkActive = true
 
     local path = PathfindingService:CreatePath({
         AgentRadius = 2,
         AgentHeight = 5,
         AgentCanJump = true,
         AgentCanClimb = true,
+        WaypointSpacing = 4,
     })
 
-    local function recomputeAndMove()
+    local function attemptPath()
         local success, err = pcall(function()
             path:ComputeAsync(hrp.Position, cafePart.Position)
         end)
 
         if not success or path.Status ~= Enum.PathStatus.Success then
+            return false
+        end
+        return true
+    end
+
+    local function followPath()
+        if not CafeWalkActive then return end
+
+        local computed = attemptPath()
+        if not computed then
+            task.wait(0.5)
+            computed = attemptPath()
+        end
+
+        if not computed then
             notify("PATH FAILED", Color3.fromRGB(255, 160, 60))
-            CafeWalkActive = false
+            StopCafeWalk()
             return
         end
 
@@ -592,7 +628,6 @@ local function StartCafeWalk()
             until reached
         end
 
-        -- Финальное приближение
         hum:MoveTo(cafePart.Position)
         local finalTimeout = tick() + 5
         repeat
@@ -603,26 +638,11 @@ local function StartCafeWalk()
             if not CafeWalkActive then return end
         until false
 
-        CafeWalkActive = false
+        StopCafeWalk()
         notify("ARRIVED AT CAFE", Color3.fromRGB(100, 255, 120))
     end
 
-    task.spawn(recomputeAndMove)
-end
-
-local function StopCafeWalk()
-    CafeWalkActive = false
-    local char = LocalPlayer.Character
-    if char then
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            hum:MoveTo(char.HumanoidRootPart.Position)
-        end
-    end
-    if CafeConnection then
-        CafeConnection:Disconnect()
-        CafeConnection = nil
-    end
+    task.spawn(followPath)
 end
 
 -- ================= UI =================
@@ -655,6 +675,7 @@ title.BackgroundTransparency = 1
 title.Font = Enum.Font.GothamBold
 title.TextSize = 16
 title.TextColor3 = Color3.fromRGB(255, 255, 255)
+title.TextStrokeTransparency = 1
 title.Text = "FRUIT ESP"
 title.Parent = mainFrame
 
@@ -677,6 +698,7 @@ local function makeButton(text, posY, color)
     btn.TextSize = 14
     btn.TextColor3 = Color3.fromRGB(200, 200, 200)
     btn.Text = "○  " .. text
+    btn.TextStrokeTransparency = 1
     btn.AutoButtonColor = false
     btn.Parent = mainFrame
 
@@ -695,74 +717,9 @@ end
 
 local fruitBtn, fruitStroke = makeButton("See Fruits", 46, CONFIG.FruitColor)
 local playerBtn, playerStroke = makeButton("See Players", 86, CONFIG.PlayerColor)
-local flyBtn = Instance.new("TextButton")
-flyBtn.Name = "FlyToFruit"
-flyBtn.Size = UDim2.new(1, -24, 0, 34)
-flyBtn.Position = UDim2.new(0, 12, 0, 126)
-flyBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-flyBtn.BorderSizePixel = 0
-flyBtn.Font = Enum.Font.Gotham
-flyBtn.TextSize = 14
-flyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-flyBtn.Text = "Fly to Fruit"
-flyBtn.AutoButtonColor = false
-flyBtn.Parent = mainFrame
-
-local flyCorner = Instance.new("UICorner")
-flyCorner.CornerRadius = UDim.new(0, 6)
-flyCorner.Parent = flyBtn
-
-local flyStroke = Instance.new("UIStroke")
-flyStroke.Color = Color3.fromRGB(100, 200, 255)
-flyStroke.Thickness = 1
-flyStroke.Transparency = 0.5
-flyStroke.Parent = flyBtn
-
-local runBtn = Instance.new("TextButton")
-runBtn.Name = "LegitRun"
-runBtn.Size = UDim2.new(1, -24, 0, 34)
-runBtn.Position = UDim2.new(0, 12, 0, 166)
-runBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-runBtn.BorderSizePixel = 0
-runBtn.Font = Enum.Font.Gotham
-runBtn.TextSize = 14
-runBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-runBtn.Text = "Legit Run"
-runBtn.AutoButtonColor = false
-runBtn.Parent = mainFrame
-
-local runCorner = Instance.new("UICorner")
-runCorner.CornerRadius = UDim.new(0, 6)
-runCorner.Parent = runBtn
-
-local runStroke = Instance.new("UIStroke")
-runStroke.Color = Color3.fromRGB(100, 255, 120)
-runStroke.Thickness = 1
-runStroke.Transparency = 0.5
-runStroke.Parent = runBtn
-
-local cafeBtn = Instance.new("TextButton")
-cafeBtn.Name = "TestWalkCafe"
-cafeBtn.Size = UDim2.new(1, -24, 0, 34)
-cafeBtn.Position = UDim2.new(0, 12, 0, 206)
-cafeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
-cafeBtn.BorderSizePixel = 0
-cafeBtn.Font = Enum.Font.Gotham
-cafeBtn.TextSize = 14
-cafeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-cafeBtn.Text = "Test Walk to Cafe"
-cafeBtn.AutoButtonColor = false
-cafeBtn.Parent = mainFrame
-
-local cafeCorner = Instance.new("UICorner")
-cafeCorner.CornerRadius = UDim.new(0, 6)
-cafeCorner.Parent = cafeBtn
-
-local cafeStroke = Instance.new("UIStroke")
-cafeStroke.Color = Color3.fromRGB(255, 200, 100)
-cafeStroke.Thickness = 1
-cafeStroke.Transparency = 0.5
-cafeStroke.Parent = cafeBtn
+local flyBtn, flyStroke = makeButton("Fly to Fruit", 126, Color3.fromRGB(100, 200, 255))
+local runBtn, runStroke = makeButton("Legit Run", 166, Color3.fromRGB(100, 255, 120))
+local cafeBtn, cafeStroke = makeButton("Test Walk to Cafe", 206, Color3.fromRGB(255, 200, 100))
 
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0, 26, 0, 26)
@@ -772,6 +729,7 @@ closeBtn.BorderSizePixel = 0
 closeBtn.Font = Enum.Font.GothamBold
 closeBtn.TextSize = 14
 closeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+closeBtn.TextStrokeTransparency = 1
 closeBtn.Text = "×"
 closeBtn.AutoButtonColor = false
 closeBtn.Parent = mainFrame
@@ -790,6 +748,7 @@ toggleBtn.BorderSizePixel = 0
 toggleBtn.Font = Enum.Font.GothamBold
 toggleBtn.TextSize = 14
 toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+toggleBtn.TextStrokeTransparency = 1
 toggleBtn.Text = "FRUIT ESP"
 toggleBtn.Parent = screenGui
 
@@ -815,22 +774,20 @@ local function updateButtonVisual(btn, stroke, enabled, color)
     end
 end
 
-local function updateButtonText(btn, text, enabled)
+local function refreshButton(btn, stroke, text, enabled, color)
+    updateButtonVisual(btn, stroke, enabled, color)
     btn.Text = (enabled and "●  " or "○  ") .. text
 end
 
-local function refreshFruitButton()
-    updateButtonVisual(fruitBtn, fruitStroke, State.ShowFruits, CONFIG.FruitColor)
-    updateButtonText(fruitBtn, "See Fruits", State.ShowFruits)
+local function refreshAllButtons()
+    refreshButton(fruitBtn, fruitStroke, "See Fruits", State.ShowFruits, CONFIG.FruitColor)
+    refreshButton(playerBtn, playerStroke, "See Players", State.ShowPlayers, CONFIG.PlayerColor)
+    refreshButton(flyBtn, flyStroke, "Fly to Fruit", FlyActive, Color3.fromRGB(100, 200, 255))
+    refreshButton(runBtn, runStroke, "Legit Run", RunActive, Color3.fromRGB(100, 255, 120))
+    refreshButton(cafeBtn, cafeStroke, "Test Walk to Cafe", CafeWalkActive, Color3.fromRGB(255, 200, 100))
 end
 
-local function refreshPlayerButton()
-    updateButtonVisual(playerBtn, playerStroke, State.ShowPlayers, CONFIG.PlayerColor)
-    updateButtonText(playerBtn, "See Players", State.ShowPlayers)
-end
-
-refreshFruitButton()
-refreshPlayerButton()
+refreshAllButtons()
 
 local function setFruitVisibility(v)
     for _, data in pairs(Tracked) do
@@ -848,56 +805,41 @@ end
 
 fruitBtn.MouseButton1Click:Connect(function()
     State.ShowFruits = not State.ShowFruits
-    refreshFruitButton()
+    refreshAllButtons()
     setFruitVisibility(State.ShowFruits)
 end)
 
 playerBtn.MouseButton1Click:Connect(function()
     State.ShowPlayers = not State.ShowPlayers
-    refreshPlayerButton()
+    refreshAllButtons()
     setPlayerVisibility(State.ShowPlayers)
 end)
 
 flyBtn.MouseButton1Click:Connect(function()
     if FlyActive then
         StopFly()
-        flyBtn.Text = "Fly to Fruit"
-        flyBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
     else
         StartFly()
-        if FlyActive then
-            flyBtn.Text = "Stop Fly"
-            flyBtn.BackgroundColor3 = Color3.fromRGB(60, 100, 140)
-        end
     end
+    refreshAllButtons()
 end)
 
 runBtn.MouseButton1Click:Connect(function()
     if RunActive then
         StopRun()
-        runBtn.Text = "Legit Run"
-        runBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
     else
         StartRun()
-        if RunActive then
-            runBtn.Text = "Stop Run"
-            runBtn.BackgroundColor3 = Color3.fromRGB(60, 140, 80)
-        end
     end
+    refreshAllButtons()
 end)
 
 cafeBtn.MouseButton1Click:Connect(function()
     if CafeWalkActive then
         StopCafeWalk()
-        cafeBtn.Text = "Test Walk to Cafe"
-        cafeBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
     else
         StartCafeWalk()
-        if CafeWalkActive then
-            cafeBtn.Text = "Stop Walk"
-            cafeBtn.BackgroundColor3 = Color3.fromRGB(140, 100, 40)
-        end
     end
+    refreshAllButtons()
 end)
 
 local function openMenu()
