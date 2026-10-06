@@ -125,27 +125,23 @@ local function saveConfig()
 end
 
 local function IsTeamSelected()
-    return LocalPlayer.Team ~= nil
+    local data = LocalPlayer:FindFirstChild("Data")
+    if data and data:FindFirstChild("Team") then
+        return data.Team.Value ~= "" and data.Team.Value ~= nil
+    end
+    return false
 end
 
 local function selectTeam()
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not playerGui then return false end
-    local mainGui = playerGui:FindFirstChild("Main")
-    if not mainGui then return false end
-    local chooseTeam = mainGui:FindFirstChild("ChooseTeam")
-    if not chooseTeam or not chooseTeam.Visible then return false end
-    local teamFrame = chooseTeam:FindFirstChild("Container")
-    if not teamFrame then return false end
-    local teamButton = teamFrame:FindFirstChild(CONFIG.Team)
-    if not teamButton then return false end
-    local viewport = teamButton:FindFirstChild("Frame")
-    if not viewport then return false end
-    local textButton = viewport:FindFirstChild("ViewportFrame")
-    if not textButton then return false end
-    local btn = textButton:FindFirstChild("TextButton")
-    if btn then
-        btn:Activate()
+    local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+    local commF = remotes and remotes:FindFirstChild("CommF_")
+    if not commF then return false end
+
+    local ok, result = pcall(function()
+        return commF:InvokeServer("SetTeam", CONFIG.Team)
+    end)
+
+    if ok then
         return true
     end
     return false
@@ -449,7 +445,8 @@ local function TryStoreFruit()
 
     local fruitCode = FRUIT_CODES[fruitTool.Name]
     if not fruitCode then
-        return false, "Unknown fruit code for " .. fruitTool.Name
+        local baseName = fruitTool.Name:gsub(" Fruit", "")
+        fruitCode = baseName .. "-" .. baseName
     end
 
     local ok, result = pcall(function()
@@ -487,8 +484,15 @@ end
 local function SetCharacterCollision(enabled)
     local char = LocalPlayer.Character
     if not char then return end
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then
+
+    local partsToChange = {
+        "Torso", "UpperTorso", "LowerTorso",
+        "Left Leg", "Right Leg",
+    }
+
+    for _, partName in ipairs(partsToChange) do
+        local part = char:FindFirstChild(partName)
+        if part and part:IsA("BasePart") then
             part.CanCollide = enabled
         end
     end
@@ -501,6 +505,14 @@ local function StopFly()
         FlyConnection = nil
     end
     SetCharacterCollision(true)
+
+    local char = LocalPlayer.Character
+    if char then
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            hrp.Velocity = Vector3.new(0, 0, 0)
+        end
+    end
 end
 
 local function StartFly()
@@ -521,6 +533,11 @@ local function StartFly()
     local speed = 100
     local reachDist = 3
     local lostTimer = 0
+
+    local bodyVelocity = Instance.new("BodyVelocity")
+    bodyVelocity.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+    bodyVelocity.Velocity = Vector3.new(0, 0, 0)
+    bodyVelocity.Parent = hrp
 
     FlyConnection = RunService.Heartbeat:Connect(function(dt)
         if not FlyActive then
@@ -562,9 +579,7 @@ local function StartFly()
         end
 
         dir = dir.Unit
-        local move = dir * speed * dt
-        currentHrp.CFrame = currentHrp.CFrame + move
-        currentHrp.Velocity = Vector3.new(0, 0, 0)
+        bodyVelocity.Velocity = dir * speed
     end)
 end
 
@@ -784,8 +799,12 @@ local function StartAutoFruit()
 
     if not IsTeamSelected() then
         notify("Selecting team " .. CONFIG.Team .. "...", Color3.fromRGB(255, 200, 100))
-        selectTeam()
-        task.wait(2.5)
+        local ok = selectTeam()
+        if not ok then
+            notify("Failed to select team. Abort.", Color3.fromRGB(255, 100, 100))
+            return false
+        end
+        task.wait(2)
         if not IsTeamSelected() then
             notify("Team not selected. Abort.", Color3.fromRGB(255, 100, 100))
             return false
