@@ -1,0 +1,316 @@
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+
+local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    repeat task.wait() until Players.LocalPlayer
+    LocalPlayer = Players.LocalPlayer
+end
+
+local FRUIT_NAMES = {
+    "Rocket", "Spin", "Blade", "Spring", "Bomb", "Smoke", "Spike",
+    "Flame", "Ice", "Sand", "Dark", "Eagle", "Diamond", "Light",
+    "Rubber", "Ghost", "Magma", "Quake", "Buddha", "Love", "Creation",
+    "Spider", "Sound", "Phoenix", "Portal", "Lightning", "Pain", "Blizzard",
+    "Gravity", "Mammoth", "T-Rex", "Dough", "Shadow", "Venom", "Gas",
+    "Spirit", "Tiger", "Yeti", "Magnet", "Kitsune", "Control", "Dragon",
+    "Leopard", "Rumble", "Chop", "Kilo", "Revive", "Barrier", "Paw"
+}
+
+local CONFIG = {
+    ScanInterval = 1.0,
+    MaxDistance = 0,
+    MinDistance = 0,
+    TextSize = 18,
+    ShowDistance = true,
+    FruitColor = Color3.fromRGB(255, 220, 0),
+    PlayerColor = Color3.fromRGB(0, 255, 120),
+    MyColor = Color3.fromRGB(0, 200, 255),
+    StrokeColor = Color3.fromRGB(0, 0, 0),
+}
+
+local Tracked = {}
+local PlayerESP = {}
+local MyESP = nil
+
+local function BuildLookup()
+    local set = {}
+    for _, name in ipairs(FRUIT_NAMES) do
+        set[name:lower()] = true
+    end
+    return set
+end
+
+local FruitLookup = BuildLookup()
+
+local function HasFruitKeyword(str)
+    if type(str) ~= "string" then return false end
+    local lower = str:lower()
+    if lower:find("fruit", 1, true) then return true end
+    if lower:find("blox fruit", 1, true) then return true end
+    for name in pairs(FruitLookup) do
+        if lower:find(name, 1, true) then return true end
+    end
+    return false
+end
+
+local function IsFruitRelated(inst)
+    if HasFruitKeyword(inst.Name) then return true end
+    for attrName, attrValue in pairs(inst:GetAttributes()) do
+        if HasFruitKeyword(attrName) then return true end
+        if type(attrValue) == "string" and HasFruitKeyword(attrValue) then return true end
+    end
+    for _, tag in ipairs(inst:GetTags()) do
+        if HasFruitKeyword(tag) then return true end
+    end
+    return false
+end
+
+local function GetAdornee(inst)
+    if inst:IsA("BasePart") then
+        return inst
+    elseif inst:IsA("Model") then
+        if inst.PrimaryPart then
+            return inst.PrimaryPart
+        end
+        local part = inst:FindFirstChildWhichIsA("BasePart", true)
+        if part then
+            inst.PrimaryPart = part
+            return part
+        end
+        return nil
+    elseif inst:IsA("Tool") or inst:IsA("Accessory") then
+        local handle = inst:FindFirstChild("Handle")
+        if handle and handle:IsA("BasePart") then
+            return handle
+        end
+        return inst:FindFirstChildWhichIsA("BasePart", true)
+    end
+    return nil
+end
+
+local function CreateBillboard(adornee, text, color, size)
+    local bb = Instance.new("BillboardGui")
+    bb.Name = "FruitESP"
+    bb.Adornee = adornee
+    bb.AlwaysOnTop = true
+    bb.LightInfluence = 0
+    bb.Size = size or UDim2.new(0, 240, 0, 40)
+    bb.StudsOffsetWorldSpace = Vector3.new(0, 3, 0)
+    bb.MaxDistance = CONFIG.MaxDistance
+    bb.ResetOnSpawn = false
+    bb.Parent = adornee
+
+    local label = Instance.new("TextLabel")
+    label.Name = "Label"
+    label.BackgroundTransparency = 1
+    label.Size = UDim2.new(1, 0, 1, 0)
+    label.Font = Enum.Font.GothamBold
+    label.TextSize = CONFIG.TextSize
+    label.TextColor3 = color
+    label.TextStrokeTransparency = 0
+    label.TextStrokeColor3 = CONFIG.StrokeColor
+    label.Text = text
+    label.Parent = bb
+
+    return bb, label
+end
+
+local function CreateOutline(adornee, color)
+    local hl = Instance.new("Highlight")
+    hl.Name = "FruitESP_Highlight"
+    hl.Adornee = adornee
+    hl.FillColor = color
+    hl.OutlineColor = color
+    hl.FillTransparency = 1
+    hl.OutlineTransparency = 0
+    hl.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    hl.Parent = adornee
+    return hl
+end
+
+local function TryTrackFruit(inst)
+    if Tracked[inst] then return end
+    if not IsFruitRelated(inst) then return end
+    local adornee = GetAdornee(inst)
+    if not adornee then return end
+
+    local name = inst:GetFullName()
+    local bb, label = CreateBillboard(adornee, name, CONFIG.FruitColor)
+    local hl = CreateOutline(adornee, CONFIG.FruitColor)
+
+    Tracked[inst] = {
+        Gui = bb,
+        Label = label,
+        Highlight = hl,
+        Adornee = adornee,
+        Name = name,
+    }
+end
+
+local function RemoveFruit(inst)
+    local data = Tracked[inst]
+    if not data then return end
+    if data.Gui then data.Gui:Destroy() end
+    if data.Highlight then data.Highlight:Destroy() end
+    Tracked[inst] = nil
+end
+
+local function ScanFruits()
+    for _, inst in ipairs(Workspace:GetDescendants()) do
+        if inst:IsA("BasePart") or inst:IsA("Model") or inst:IsA("Tool") or inst:IsA("Accessory") then
+            TryTrackFruit(inst)
+        end
+    end
+end
+
+local function ApplyPlayerESP(player, isLocal)
+    if PlayerESP[player] then
+        if PlayerESP[player].Gui then PlayerESP[player].Gui:Destroy() end
+        if PlayerESP[player].Highlight then PlayerESP[player].Highlight:Destroy() end
+        PlayerESP[player] = nil
+    end
+
+    local function setupCharacter(char)
+        local head = char:WaitForChild("Head", 5)
+        local hrp = char:WaitForChild("HumanoidRootPart", 5)
+        if not head or not hrp then return end
+
+        local color = isLocal and CONFIG.MyColor or CONFIG.PlayerColor
+        local prefix = isLocal and "[YOU] " or ""
+        local text = prefix .. player.Name
+
+        local bb, label = CreateBillboard(head, text, color, UDim2.new(0, 260, 0, 44))
+        local hl = CreateOutline(char, color)
+
+        PlayerESP[player] = {
+            Gui = bb,
+            Label = label,
+            Highlight = hl,
+            Head = head,
+            HRP = hrp,
+            BaseText = text,
+        }
+    end
+
+    if player.Character then
+        setupCharacter(player.Character)
+    end
+
+    player.CharacterAdded:Connect(function(char)
+        task.wait(0.5)
+        setupCharacter(char)
+    end)
+
+    player.CharacterRemoving:Connect(function()
+        local data = PlayerESP[player]
+        if data then
+            if data.Gui then data.Gui:Destroy() end
+            if data.Highlight then data.Highlight:Destroy() end
+            PlayerESP[player] = nil
+        end
+    end)
+end
+
+local function GetMyPosition()
+    local char = LocalPlayer.Character
+    if char and char:FindFirstChild("HumanoidRootPart") then
+        return char.HumanoidRootPart.Position
+    end
+    return nil
+end
+
+ScanFruits()
+
+task.spawn(function()
+    while task.wait(CONFIG.ScanInterval) do
+        ScanFruits()
+    end
+end)
+
+Workspace.DescendantAdded:Connect(function(inst)
+    if inst:IsA("BasePart") or inst:IsA("Model") or inst:IsA("Tool") or inst:IsA("Accessory") then
+        task.defer(TryTrackFruit, inst)
+    end
+end)
+
+Workspace.DescendantRemoving:Connect(function(inst)
+    if Tracked[inst] then
+        RemoveFruit(inst)
+    end
+end)
+
+for _, player in ipairs(Players:GetPlayers()) do
+    ApplyPlayerESP(player, player == LocalPlayer)
+end
+
+Players.PlayerAdded:Connect(function(player)
+    ApplyPlayerESP(player, false)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+    local data = PlayerESP[player]
+    if data then
+        if data.Gui then data.Gui:Destroy() end
+        if data.Highlight then data.Highlight:Destroy() end
+        PlayerESP[player] = nil
+    end
+end)
+
+RunService.RenderStepped:Connect(function()
+    local myPos = GetMyPosition()
+    if not myPos then return end
+
+    for inst, data in pairs(Tracked) do
+        if not inst.Parent or not data.Adornee or not data.Adornee.Parent then
+            RemoveFruit(inst)
+            continue
+        end
+
+        local dist = (data.Adornee.Position - myPos).Magnitude
+
+        if CONFIG.MinDistance > 0 and dist < CONFIG.MinDistance then
+            data.Gui.Enabled = false
+            if data.Highlight then data.Highlight.Enabled = false end
+        elseif CONFIG.MaxDistance > 0 and dist > CONFIG.MaxDistance then
+            data.Gui.Enabled = false
+            if data.Highlight then data.Highlight.Enabled = false end
+        else
+            data.Gui.Enabled = true
+            if data.Highlight then data.Highlight.Enabled = true end
+            if CONFIG.ShowDistance then
+                data.Label.Text = string.format("%s\n[%d studs]", data.Name, math.floor(dist))
+            else
+                data.Label.Text = data.Name
+            end
+        end
+    end
+
+    for player, data in pairs(PlayerESP) do
+        if not data.Head or not data.Head.Parent then
+            if data.Gui then data.Gui:Destroy() end
+            if data.Highlight then data.Highlight:Destroy() end
+            PlayerESP[player] = nil
+            continue
+        end
+
+        local dist = (data.Head.Position - myPos).Magnitude
+
+        if CONFIG.MinDistance > 0 and dist < CONFIG.MinDistance then
+            data.Gui.Enabled = false
+            if data.Highlight then data.Highlight.Enabled = false end
+        elseif CONFIG.MaxDistance > 0 and dist > CONFIG.MaxDistance then
+            data.Gui.Enabled = false
+            if data.Highlight then data.Highlight.Enabled = false end
+        else
+            data.Gui.Enabled = true
+            if data.Highlight then data.Highlight.Enabled = true end
+            if CONFIG.ShowDistance then
+                data.Label.Text = string.format("%s\n[%d studs]", data.BaseText, math.floor(dist))
+            else
+                data.Label.Text = data.BaseText
+            end
+        end
+    end
+end)
