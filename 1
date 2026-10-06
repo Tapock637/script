@@ -41,6 +41,11 @@ local State = {
 local Tracked = {}
 local PlayerESP = {}
 
+local FlyActive = false
+local RunActive = false
+local FlyConnection = nil
+local RunConnection = nil
+
 local function BuildLookup()
     local set = {}
     for _, name in ipairs(FRUIT_NAMES) do
@@ -218,7 +223,25 @@ local function GetMyPosition()
     return nil
 end
 
--- ================= UI =================
+local function GetNearestFruit()
+    local myPos = GetMyPosition()
+    if not myPos then return nil end
+
+    local nearest = nil
+    local nearestDist = math.huge
+
+    for inst, data in pairs(Tracked) do
+        if inst.Parent and data.Adornee and data.Adornee.Parent then
+            local dist = (data.Adornee.Position - myPos).Magnitude
+            if dist < nearestDist then
+                nearestDist = dist
+                nearest = data.Adornee
+            end
+        end
+    end
+
+    return nearest
+end
 
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "FruitESP_UI"
@@ -228,9 +251,220 @@ screenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 local parentGui = (gethui and gethui()) or CoreGui
 screenGui.Parent = parentGui
 
+local function notify(text, color)
+    local box = Instance.new("TextLabel")
+    box.Size = UDim2.new(0, 260, 0, 46)
+    box.Position = UDim2.new(0.5, -130, 0, -60)
+    box.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
+    box.BackgroundTransparency = 0.1
+    box.BorderSizePixel = 0
+    box.Font = Enum.Font.GothamBold
+    box.TextSize = 16
+    box.TextColor3 = color or Color3.fromRGB(255, 255, 255)
+    box.Text = text
+    box.Parent = screenGui
+
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, 10)
+    c.Parent = box
+
+    local s = Instance.new("UIStroke")
+    s.Color = color or Color3.fromRGB(255, 60, 60)
+    s.Thickness = 1.5
+    s.Transparency = 0.2
+    s.Parent = box
+
+    TweenService:Create(box, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+        Position = UDim2.new(0.5, -130, 0, 20),
+    }):Play()
+
+    task.delay(3, function()
+        local out = TweenService:Create(box, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+            Position = UDim2.new(0.5, -130, 0, -60),
+            BackgroundTransparency = 1,
+            TextTransparency = 1,
+        })
+        out:Play()
+        out.Completed:Connect(function()
+            box:Destroy()
+        end)
+    end)
+end
+
+local function StartFly()
+    if FlyActive then return end
+    FlyActive = true
+
+    local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if not hrp then
+        FlyActive = false
+        return
+    end
+
+    local target = GetNearestFruit()
+    if not target then
+        notify("NO FRUIT FOUND", Color3.fromRGB(255, 160, 60))
+        FlyActive = false
+        return
+    end
+
+    local speed = 100
+    local reachDist = 3
+
+    FlyConnection = RunService.Heartbeat:Connect(function(dt)
+        if not FlyActive then return end
+
+        local char = LocalPlayer.Character
+        if not char then
+            FlyActive = false
+            if FlyConnection then FlyConnection:Disconnect() end
+            return
+        end
+
+        local currentHrp = char:FindFirstChild("HumanoidRootPart")
+        if not currentHrp then
+            FlyActive = false
+            if FlyConnection then FlyConnection:Disconnect() end
+            return
+        end
+
+        if not target.Parent then
+            target = GetNearestFruit()
+            if not target then
+                FlyActive = false
+                if FlyConnection then FlyConnection:Disconnect() end
+                return
+            end
+        end
+
+        local targetPos = target.Position
+        local myPos = currentHrp.Position
+        local dir = (targetPos - myPos)
+
+        if dir.Magnitude <= reachDist then
+            FlyActive = false
+            if FlyConnection then FlyConnection:Disconnect() end
+            return
+        end
+
+        dir = dir.Unit
+        local move = dir * speed * dt
+        currentHrp.CFrame = currentHrp.CFrame + move
+        currentHrp.Velocity = Vector3.new(0, 0, 0)
+    end)
+end
+
+local function StopFly()
+    FlyActive = false
+    if FlyConnection then
+        FlyConnection:Disconnect()
+        FlyConnection = nil
+    end
+end
+
+local function StartRun()
+    if RunActive then return end
+    RunActive = true
+
+    local lastJump = 0
+    local jumpSpam = false
+    local spamUntil = 0
+
+    RunConnection = RunService.Heartbeat:Connect(function(dt)
+        if not RunActive then return end
+
+        local char = LocalPlayer.Character
+        if not char then return end
+
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if not hrp or not hum then return end
+
+        local target = GetNearestFruit()
+        if not target then
+            RunActive = false
+            if RunConnection then RunConnection:Disconnect() end
+            return
+        end
+
+        local targetPos = target.Position
+        local myPos = hrp.Position
+        local dir = (targetPos - myPos)
+
+        if dir.Magnitude <= 4 then
+            RunActive = false
+            if RunConnection then RunConnection:Disconnect() end
+            return
+        end
+
+        local now = tick()
+        local currentHealth = hum.Health
+        if hum:GetAttribute("LastHealth") then
+            local lastHealth = hum:GetAttribute("LastHealth")
+            if currentHealth < lastHealth then
+                jumpSpam = true
+                spamUntil = now + 1.5
+            end
+        end
+        hum:SetAttribute("LastHealth", currentHealth)
+
+        local flatDir = Vector3.new(dir.X, 0, dir.Z)
+        if flatDir.Magnitude > 0 then
+            flatDir = flatDir.Unit
+            local move = flatDir * hum.WalkSpeed * dt
+            hrp.CFrame = hrp.CFrame + move
+        end
+
+        local rayOrigin = hrp.Position
+        local rayDir = flatDir * 5
+        local rayParams = RaycastParams.new()
+        rayParams.FilterType = Enum.RaycastFilterType.Exclude
+        rayParams.FilterDescendantsInstances = {char}
+
+        local rayResult = workspace:Raycast(rayOrigin, rayDir, rayParams)
+        local wallBlocked = rayResult ~= nil
+
+        local downRay = workspace:Raycast(rayOrigin, Vector3.new(0, -10, 0), rayParams)
+        local voidAhead = downRay == nil
+
+        local shouldJump = false
+
+        if wallBlocked then
+            shouldJump = true
+        end
+
+        if voidAhead then
+            if now - lastJump >= 1 then
+                shouldJump = true
+            end
+        end
+
+        if jumpSpam then
+            if now < spamUntil then
+                shouldJump = true
+            else
+                jumpSpam = false
+            end
+        end
+
+        if shouldJump then
+            hum.Jump = true
+            lastJump = now
+        end
+    end)
+end
+
+local function StopRun()
+    RunActive = false
+    if RunConnection then
+        RunConnection:Disconnect()
+        RunConnection = nil
+    end
+end
+
 local mainFrame = Instance.new("Frame")
 mainFrame.Name = "Main"
-mainFrame.Size = UDim2.new(0, 220, 0, 180)
+mainFrame.Size = UDim2.new(0, 220, 0, 300)
 mainFrame.Position = UDim2.new(0, 20, 0, 100)
 mainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
 mainFrame.BackgroundTransparency = 0.1
@@ -296,6 +530,7 @@ end
 
 local fruitBtn, fruitStroke = makeButton("See Fruits", 46, CONFIG.FruitColor)
 local playerBtn, playerStroke = makeButton("See Players", 86, CONFIG.PlayerColor)
+
 local closeBtn = Instance.new("TextButton")
 closeBtn.Size = UDim2.new(0, 26, 0, 26)
 closeBtn.Position = UDim2.new(1, -32, 0, 5)
@@ -311,6 +546,76 @@ closeBtn.Parent = mainFrame
 local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 6)
 closeCorner.Parent = closeBtn
+
+local flyBtn = Instance.new("TextButton")
+flyBtn.Name = "FlyToFruit"
+flyBtn.Size = UDim2.new(1, -24, 0, 34)
+flyBtn.Position = UDim2.new(0, 12, 0, 126)
+flyBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+flyBtn.BorderSizePixel = 0
+flyBtn.Font = Enum.Font.Gotham
+flyBtn.TextSize = 14
+flyBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+flyBtn.Text = "✈  Fly to Fruit"
+flyBtn.AutoButtonColor = false
+flyBtn.Parent = mainFrame
+
+local flyCorner = Instance.new("UICorner")
+flyCorner.CornerRadius = UDim.new(0, 6)
+flyCorner.Parent = flyBtn
+
+local flyStroke = Instance.new("UIStroke")
+flyStroke.Color = Color3.fromRGB(100, 200, 255)
+flyStroke.Thickness = 1
+flyStroke.Transparency = 0.5
+flyStroke.Parent = flyBtn
+
+local runBtn = Instance.new("TextButton")
+runBtn.Name = "LegitRun"
+runBtn.Size = UDim2.new(1, -24, 0, 34)
+runBtn.Position = UDim2.new(0, 12, 0, 166)
+runBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+runBtn.BorderSizePixel = 0
+runBtn.Font = Enum.Font.Gotham
+runBtn.TextSize = 14
+runBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+runBtn.Text = "🏃  Legit Run"
+runBtn.AutoButtonColor = false
+runBtn.Parent = mainFrame
+
+local runCorner = Instance.new("UICorner")
+runCorner.CornerRadius = UDim.new(0, 6)
+runCorner.Parent = runBtn
+
+local runStroke = Instance.new("UIStroke")
+runStroke.Color = Color3.fromRGB(100, 255, 120)
+runStroke.Thickness = 1
+runStroke.Transparency = 0.5
+runStroke.Parent = runBtn
+
+flyBtn.MouseButton1Click:Connect(function()
+    if FlyActive then
+        StopFly()
+        flyBtn.Text = "✈  Fly to Fruit"
+        flyBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+    else
+        StartFly()
+        flyBtn.Text = "✈  Stop Fly"
+        flyBtn.BackgroundColor3 = Color3.fromRGB(60, 100, 140)
+    end
+end)
+
+runBtn.MouseButton1Click:Connect(function()
+    if RunActive then
+        StopRun()
+        runBtn.Text = "🏃  Legit Run"
+        runBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+    else
+        StartRun()
+        runBtn.Text = "🏃  Stop Run"
+        runBtn.BackgroundColor3 = Color3.fromRGB(60, 140, 80)
+    end
+end)
 
 local toggleBtn = Instance.new("TextButton")
 toggleBtn.Name = "Toggle"
@@ -390,13 +695,12 @@ playerBtn.MouseButton1Click:Connect(function()
     setPlayerVisibility(State.ShowPlayers)
 end)
 
--- Анимация открытия / закрытия меню
 local function openMenu()
     mainFrame.Visible = true
     mainFrame.Size = UDim2.new(0, 0, 0, 0)
     mainFrame.BackgroundTransparency = 1
     TweenService:Create(mainFrame, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Size = UDim2.new(0, 220, 0, 180),
+        Size = UDim2.new(0, 220, 0, 300),
         BackgroundTransparency = 0.1,
     }):Play()
     for _, child in ipairs(mainFrame:GetChildren()) do
@@ -432,7 +736,6 @@ closeBtn.MouseButton1Click:Connect(function()
     closeMenu()
 end)
 
--- Перетаскивание кнопки-тоггла
 local dragging = false
 local dragStart, startPos
 
@@ -457,7 +760,6 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- Перетаскивание основного меню (за заголовок)
 local menuDragging = false
 local menuDragStart, menuStartPos
 
@@ -481,50 +783,6 @@ UserInputService.InputChanged:Connect(function(input)
         mainFrame.Position = UDim2.new(menuStartPos.X.Scale, menuStartPos.X.Offset + delta.X, menuStartPos.Y.Scale, menuStartPos.Y.Offset + delta.Y)
     end
 end)
-
--- ================= Уведомление о старте =================
-
-local function notify(text, color)
-    local box = Instance.new("TextLabel")
-    box.Size = UDim2.new(0, 260, 0, 46)
-    box.Position = UDim2.new(0.5, -130, 0, -60)
-    box.BackgroundColor3 = Color3.fromRGB(25, 25, 30)
-    box.BackgroundTransparency = 0.1
-    box.BorderSizePixel = 0
-    box.Font = Enum.Font.GothamBold
-    box.TextSize = 16
-    box.TextColor3 = color or Color3.fromRGB(255, 255, 255)
-    box.Text = text
-    box.Parent = screenGui
-
-    local c = Instance.new("UICorner")
-    c.CornerRadius = UDim.new(0, 10)
-    c.Parent = box
-
-    local s = Instance.new("UIStroke")
-    s.Color = color or Color3.fromRGB(255, 60, 60)
-    s.Thickness = 1.5
-    s.Transparency = 0.2
-    s.Parent = box
-
-    TweenService:Create(box, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
-        Position = UDim2.new(0.5, -130, 0, 20),
-    }):Play()
-
-    task.delay(3, function()
-        local out = TweenService:Create(box, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
-            Position = UDim2.new(0.5, -130, 0, -60),
-            BackgroundTransparency = 1,
-            TextTransparency = 1,
-        })
-        out:Play()
-        out.Completed:Connect(function()
-            box:Destroy()
-        end)
-    end)
-end
-
--- ================= Запуск =================
 
 ScanFruits()
 
@@ -630,7 +888,6 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- Стартовое уведомление
 task.spawn(function()
     task.wait(0.5)
     local found = false
