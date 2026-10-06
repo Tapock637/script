@@ -14,7 +14,6 @@ if not LocalPlayer then
     LocalPlayer = Players.LocalPlayer
 end
 
--- ================= CONFIG =================
 local CONFIG = {
     ScanInterval = 1.0,
     TextSize = 18,
@@ -29,7 +28,6 @@ local CONFIG = {
     ReachDistance = 3,
 }
 
--- ================= СПИСОК ФРУКТОВ И ИХ КОДОВ =================
 local FRUIT_CODES = {
     ["Rocket Fruit"] = "Rocket-Rocket", ["Spin Fruit"] = "Spin-Spin",
     ["Chop Fruit"] = "Chop-Chop", ["Spring Fruit"] = "Spring-Spring",
@@ -54,7 +52,6 @@ local FRUIT_CODES = {
     ["Kitsune Fruit"] = "Kitsune-Kitsune",
 }
 
--- ================= ИСКЛЮЧЕНИЯ =================
 local EXCLUDE = {
     "gacha","dealer","shop","stand","vendor","npc","pedestal","display",
     "clone","effect","particle","aura","trail","island","portal","door",
@@ -62,14 +59,12 @@ local EXCLUDE = {
     "fruitmachine","fruitvendor","fruitdealer","fruitstand",
 }
 
--- ================= СОСТОЯНИЕ =================
 local State = { AutoFruit = false }
 local Tracked = {}
 local AutoFruitActive = false
 local AutoThread = nil
 local AutoFlyConn = nil
 
--- ================= ЗАГРУЗКА/СОХРАНЕНИЕ КОНФИГА =================
 local function loadConfig()
     if not (isfile and readfile) then return end
     local ok, data = pcall(function()
@@ -87,7 +82,6 @@ local function saveConfig()
     end)
 end
 
--- ================= ФИЛЬТРЫ ДЛЯ ПОИСКА ФРУКТОВ =================
 local function HasExcluded(str)
     if type(str) ~= "string" then return false end
     local l = str:lower()
@@ -135,7 +129,6 @@ local function IsFruitRelated(inst)
     return true
 end
 
--- ================= ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =================
 local function GetSize(adornee)
     if adornee:IsA("BasePart") then
         local s = adornee.Size
@@ -161,7 +154,6 @@ local function GetAdornee(inst)
     return nil
 end
 
--- ================= ESP =================
 local function CreateBillboard(adornee, text, color)
     local bb = Instance.new("BillboardGui")
     bb.Name = "FruitESP"
@@ -229,7 +221,6 @@ local function ScanFruits()
     end
 end
 
--- ================= ПОЗИЦИЯ И ПОИСК ФРУКТОВ =================
 local function GetMyPosition()
     local char = LocalPlayer.Character
     if char and char:FindFirstChild("HumanoidRootPart") then
@@ -263,7 +254,6 @@ local function HasAnyFruit()
     return false
 end
 
--- ================= КОЛЛИЗИЯ =================
 local function SetCollision(enabled)
     local char = LocalPlayer.Character
     if not char then return end
@@ -276,7 +266,6 @@ local function SetCollision(enabled)
     if hrp then hrp.CanCollide = enabled end
 end
 
--- ================= СНЯТИЕ ИНСТРУМЕНТОВ =================
 local function UnequipAllTools()
     local char = LocalPlayer.Character
     if not char then return end
@@ -291,7 +280,6 @@ local function UnequipAllTools()
     end
 end
 
--- ================= КОМАНДА =================
 local function IsTeamSelected()
     if LocalPlayer.Team ~= nil and LocalPlayer.Team.Name ~= "" then
         return true
@@ -313,7 +301,6 @@ local function selectTeam()
     end)
 end
 
--- ================= СОХРАНЕНИЕ ФРУКТА =================
 local function TryStoreFruit()
     local char = LocalPlayer.Character
     if not char then return false end
@@ -338,10 +325,10 @@ local function TryStoreFruit()
     end)
 end
 
--- ================= СЕРВЕР-ХОП (УЛУЧШЕННЫЙ) =================
+-- ================= SERVER HOP (тот же сервер) =================
 local function ServerHop()
-    -- Пытаемся сохранить скрипт для следующего сервера
-    local scriptUrl = "https://raw.githubusercontent.com/Tapock637/script/refs/heads/main/1" -- ЗАМЕНИ НА СВОЮ ССЫЛКУ!
+    -- Пытаемся поставить скрипт в очередь на перезапуск после телепорта
+    local scriptUrl = "https://raw.githubusercontent.com/Tapock637/script/refs/heads/main/1" -- ЗАМЕНИ НА СВОЮ ССЫЛКУ
     local queueFunc = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
     if queueFunc then
         pcall(function()
@@ -349,43 +336,20 @@ local function ServerHop()
         end)
     end
 
-    -- Получаем список серверов
-    local servers = {}
-    local success, response = pcall(function()
-        return game:HttpGet(
-            "https://games.roblox.com/v1/games/" .. CONFIG.PlaceId ..
-            "/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true"
-        )
+    -- Способ 1: TeleportToPlaceInstance с текущим JobId (тот же сервер)
+    local ok1 = pcall(function()
+        TeleportService:TeleportToPlaceInstance(CONFIG.PlaceId, game.JobId, LocalPlayer)
     end)
 
-    if success and response then
-        local ok, data = pcall(function()
-            return HttpService:JSONDecode(response)
-        end)
-        if ok and data and data.data then
-            for _, server in ipairs(data.data) do
-                if server.id ~= game.JobId and server.playing < server.maxPlayers then
-                    table.insert(servers, server.id)
-                end
-            end
-        end
-    end
-
-    -- Телепортируемся на случайный сервер или просто перезаходим
-    if #servers > 0 then
-        local randomServer = servers[math.random(1, #servers)]
-        pcall(function()
-            TeleportService:TeleportToPlaceInstance(CONFIG.PlaceId, randomServer, LocalPlayer)
-        end)
-    else
+    -- Если не сработало, способ 2: обычный Teleport (Roblox сам выберет сервер)
+    if not ok1 then
         pcall(function()
             TeleportService:Teleport(CONFIG.PlaceId, LocalPlayer)
         end)
     end
 end
--- ============================================================
+-- =============================================================
 
--- ================= АВТОФАРМ =================
 local function StopAutoFruit()
     AutoFruitActive = false
     if AutoThread then task.cancel(AutoThread) AutoThread = nil end
@@ -473,7 +437,6 @@ local function StartAutoFruit()
     return true
 end
 
--- ================= UI =================
 local screenGui = Instance.new("ScreenGui")
 screenGui.Name = "FruitESP_UI"
 screenGui.ResetOnSpawn = false
@@ -607,7 +570,6 @@ autoBtn.MouseButton1Click:Connect(function()
     saveConfig()
 end)
 
--- ================= АНИМАЦИЯ МЕНЮ =================
 local function openMenu()
     mainFrame.Visible = true
     mainFrame.Size = UDim2.new(0, 0, 0, 0)
@@ -630,7 +592,6 @@ end)
 
 closeBtn.MouseButton1Click:Connect(closeMenu)
 
--- ================= ПЕРЕТАСКИВАНИЕ =================
 local dragging = false
 local dragStart, startPos
 
@@ -678,7 +639,6 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
--- ================= ЗАПУСК =================
 loadConfig()
 refreshBtn(autoBtn, "Auto Fruit", State.AutoFruit, Color3.fromRGB(255, 100, 200))
 
@@ -722,7 +682,6 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- ================= АВТО-СТОР =================
 task.spawn(function()
     while task.wait(0.5) do
         local char = LocalPlayer.Character
