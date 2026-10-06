@@ -23,10 +23,11 @@ local CONFIG = {
     MinDistance = 0,
     TextSize = 18,
     ShowDistance = true,
-    FruitColor = Color3.fromRGB(255, 220, 0),
-    PlayerColor = Color3.fromRGB(0, 255, 120),
+    FruitColor = Color3.fromRGB(255, 60, 60),
+    PlayerColor = Color3.fromRGB(60, 140, 255),
     MyColor = Color3.fromRGB(0, 200, 255),
     StrokeColor = Color3.fromRGB(0, 0, 0),
+    MaxSize = 8,
 }
 
 local Tracked = {}
@@ -42,31 +43,31 @@ end
 
 local FruitLookup = BuildLookup()
 
-local function HasFruitKeyword(str)
+local function HasFruitName(str)
     if type(str) ~= "string" then return false end
     local lower = str:lower()
-    if lower:find("fruit", 1, true) then return true end
-    for name in pairs(FruitLookup) do
-        if lower == name then
-            return true
-        end
-    end
+    return FruitLookup[lower] == true
+end
+
+local function IsNpc(inst)
+    if inst:FindFirstChild("Humanoid") then return true end
+    if inst.Name:lower():find("npc") then return true end
     return false
 end
 
 local function IsFruitRelated(inst)
-    if not (inst:IsA("Tool") or inst:IsA("Model")) then
-        return false
-    end
-    if HasFruitKeyword(inst.Name) then return true end
-    for attrName, attrValue in pairs(inst:GetAttributes()) do
-        if HasFruitKeyword(attrName) then return true end
-        if type(attrValue) == "string" and HasFruitKeyword(attrValue) then return true end
-    end
-    for _, tag in ipairs(inst:GetTags()) do
-        if HasFruitKeyword(tag) then return true end
-    end
+    if IsNpc(inst) then return false end
+    if not (inst:IsA("Tool") or inst:IsA("Model")) then return false end
+    if HasFruitName(inst.Name) then return true end
     return false
+end
+
+local function GetSize(adornee)
+    if adornee:IsA("BasePart") then
+        local s = adornee.Size
+        return math.max(s.X, s.Y, s.Z)
+    end
+    return nil
 end
 
 local function GetAdornee(inst)
@@ -132,6 +133,9 @@ local function TryTrackFruit(inst)
     local adornee = GetAdornee(inst)
     if not adornee then return end
 
+    local size = GetSize(adornee)
+    if size and size > CONFIG.MaxSize then return end
+
     local name = inst.Name
     local bb, label = CreateBillboard(adornee, name, CONFIG.FruitColor)
     local hl = CreateOutline(adornee, CONFIG.FruitColor)
@@ -169,6 +173,7 @@ local function ApplyPlayerESP(player, isLocal)
     end
 
     local function setupCharacter(char)
+        if char:FindFirstChild("FruitESP") then return end
         local head = char:WaitForChild("Head", 5)
         local hrp = char:WaitForChild("HumanoidRootPart", 5)
         if not head or not hrp then return end
