@@ -1,15 +1,20 @@
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
-local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local UserInputService = game:GetService("UserInputService")
+local CoreGui = game:GetService("CoreGui")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local PhysicsService = game:GetService("PhysicsService")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local Lighting = game:GetService("Lighting")
 
 local LocalPlayer = Players.LocalPlayer
+if not LocalPlayer then
+    repeat task.wait() until Players.LocalPlayer
+    LocalPlayer = Players.LocalPlayer
+end
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
 local CONFIG = {
@@ -27,6 +32,9 @@ local CONFIG = {
     FruitLostDelay = 3,
     MaxFruitSize = 5,
     MaxFruitParts = 15,
+    MaxPlayersForHop = 8,
+    Team = "Marines",
+    ScanInterval = 1.0,
     ConfigFile = "windhaser_config.json",
 }
 
@@ -75,10 +83,6 @@ local EXCLUDE = {
     "ground","floor","wall","building","tree","rock",
 }
 
-local MenuLocked = false
-local CurrentKeybind = Enum.KeyCode.RightShift
-local WaitingForKey = false
-
 local State = {
     ESPEnabled = false,
     FlyEnabled = false,
@@ -101,31 +105,8 @@ local State = {
     ChamsEnabled = false,
     TracersEnabled = false,
     KillAuraEnabled = false,
+    MenuLockedState = false,
 }
-
-local Tracked = {}
-local FlyConn = nil
-local AutoStoreThread = nil
-local AutoFarmFruitThread = nil
-local AimbotConn = nil
-local AutoBossFarmThread = nil
-local AutoMasteryThread = nil
-local AutoQuestThread = nil
-local AutoFarmLevelThread = nil
-local AutoFarmNoQuestThread = nil
-local MobAuraThread = nil
-local AutoMaterialsThread = nil
-local AutoBonesThread = nil
-local AutoChestsThread = nil
-local AutoRaidThread = nil
-local KillAuraThread = nil
-local FullbrightThread = nil
-
-local SelectedBoss = "Gorilla King"
-local SelectedMaterial = "Leather"
-local SelectedChip = "Flame"
-local MasteryType = "Melee"
-local RaidWeapon = "Melee"
 
 local function loadConfig()
     if not (isfile and readfile) then return end
@@ -141,30 +122,42 @@ local function loadConfig()
     end
 end
 
+loadConfig()
+
 local function saveConfig()
-    if not (writefile and isfile) then return end
+    if not writefile then return end
     pcall(function()
         writefile(CONFIG.ConfigFile, HttpService:JSONEncode(State))
     end)
 end
 
-local NOCLIP_GROUP = "WindHaserNoclip"
-pcall(function() PhysicsService:RegisterCollisionGroup(NOCLIP_GROUP) end)
-pcall(function()
-    PhysicsService:CollisionGroupSetCollidable(NOCLIP_GROUP, "Default", false)
-    PhysicsService:CollisionGroupSetCollidable(NOCLIP_GROUP, NOCLIP_GROUP, false)
-end)
+local Tracked = {}
+local FlyConn = nil
+local AutoStoreThread = nil
+local AutoFarmFruitThread = nil
+local AutoFlyConn = nil
+local AimbotConn = nil
+local AutoBossFarmThread = nil
+local AutoMasteryThread = nil
+local AutoQuestThread = nil
+local AutoFarmLevelThread = nil
+local AutoFarmNoQuestThread = nil
+local MobAuraThread = nil
+local AutoMaterialsThread = nil
+local AutoBonesThread = nil
+local AutoChestsThread = nil
+local AutoRaidThread = nil
+local KillAuraThread = nil
+local FullbrightThread = nil
 
-local function SetCharacterCollisionGroup(group)
-    local char = LocalPlayer.Character
-    if not char then return end
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then part.CollisionGroup = group end
-    end
-end
-
-local function EnableNoclip() SetCharacterCollisionGroup(NOCLIP_GROUP) end
-local function DisableNoclip() SetCharacterCollisionGroup("Default") end
+local MenuLocked = State.MenuLockedState
+local CurrentKeybind = Enum.KeyCode.RightShift
+local WaitingForKey = false
+local SelectedBoss = "Gorilla King"
+local SelectedMaterial = "Leather"
+local SelectedChip = "Flame"
+local MasteryType = "Melee"
+local RaidWeapon = "Melee"
 
 local function GetCommF()
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
@@ -180,9 +173,7 @@ local function HasExcluded(str)
     return false
 end
 
-local function StripSuffix(name)
-    return (name:gsub("%.%d+$", ""))
-end
+local function StripSuffix(name) return (name:gsub("%.%d+$", "")) end
 
 local function GetFruitBaseName(str)
     local cleanName = StripSuffix(str)
@@ -190,9 +181,7 @@ local function GetFruitBaseName(str)
     for fname, _ in pairs(FRUIT_CODES) do
         local fl = fname:lower()
         local base = fl:gsub(" fruit", "")
-        if lower == fl or lower == base then
-            return base
-        end
+        if lower == fl or lower == base then return base end
     end
     return nil
 end
@@ -212,9 +201,7 @@ end
 local function IsInsideCharacter(inst)
     local p = inst.Parent
     while p do
-        if p:IsA("Model") and p:FindFirstChildOfClass("Humanoid") then
-            return true
-        end
+        if p:IsA("Model") and p:FindFirstChildOfClass("Humanoid") then return true end
         p = p.Parent
     end
     return false
@@ -245,21 +232,16 @@ local function IsFruitRelated(inst)
     if not (inst:IsA("Tool") or inst:IsA("Model")) then return false end
     if not IsFruitName(inst.Name) then return false end
     if IsInsideCharacter(inst) then return false end
-
-    local adornee = nil
+    local adornee
     if inst:IsA("Model") then
         adornee = inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
     elseif inst:IsA("Tool") then
         adornee = inst:FindFirstChild("Handle") or inst:FindFirstChildWhichIsA("BasePart", true)
     end
     if not adornee then return false end
-
     local size = GetSize(adornee)
     if size and size > CONFIG.MaxFruitSize then return false end
-
-    local parts = CountParts(inst)
-    if parts > CONFIG.MaxFruitParts then return false end
-
+    if CountParts(inst) > CONFIG.MaxFruitParts then return false end
     return true
 end
 
@@ -277,7 +259,7 @@ local function GetAdornee(inst)
     return nil
 end
 
-local function CreateFruitBillboard(adornee, text, color)
+local function CreateBillboard(adornee, text, color)
     local bb = Instance.new("BillboardGui")
     bb.Name = "FruitESP"
     bb.Adornee = adornee
@@ -301,7 +283,7 @@ local function CreateFruitBillboard(adornee, text, color)
     return bb, label
 end
 
-local function CreateFruitOutline(adornee, color)
+local function CreateOutline(adornee, color)
     local hl = Instance.new("Highlight")
     hl.Name = "FruitESP_Highlight"
     hl.Adornee = adornee
@@ -319,13 +301,13 @@ local function TryTrackFruit(inst)
     if not IsFruitRelated(inst) then return end
     local adornee = GetAdornee(inst)
     if not adornee then return end
-    local bb, label = CreateFruitBillboard(adornee, inst.Name, CONFIG.FruitColor)
-    local hl = CreateFruitOutline(adornee, CONFIG.FruitColor)
+    local bb, label = CreateBillboard(adornee, inst.Name, CONFIG.FruitColor)
+    local hl = CreateOutline(adornee, CONFIG.FruitColor)
     Tracked[inst] = { Gui = bb, Label = label, Highlight = hl, Adornee = adornee, Name = inst.Name }
     if not State.ESPEnabled then bb.Enabled = false; hl.Enabled = false end
 end
 
-local function RemoveFruitTracked(inst)
+local function RemoveFruit(inst)
     local d = Tracked[inst]
     if not d then return end
     if d.Gui then d.Gui:Destroy() end
@@ -358,6 +340,46 @@ local function GetNearestFruit()
     return nearest
 end
 
+local function HasAnyFruit()
+    for inst, data in pairs(Tracked) do
+        if inst.Parent and data.Adornee and data.Adornee.Parent then return true end
+    end
+    return false
+end
+
+local function SetCollision(enabled)
+    local char = LocalPlayer.Character
+    if not char then return end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then part.CanCollide = enabled end
+    end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    if hrp then hrp.CanCollide = enabled end
+end
+
+local function IsTeamSelected()
+    if LocalPlayer.Team ~= nil and LocalPlayer.Team.Name ~= "" then return true end
+    local data = LocalPlayer:FindFirstChild("Data")
+    if data then
+        local team = data:FindFirstChild("Team")
+        if team and team.Value ~= "" then return true end
+    end
+    return false
+end
+
+local function selectTeam()
+    local commF = GetCommF()
+    if not commF then return false end
+    return pcall(function() commF:InvokeServer("SetTeam", CONFIG.Team) end)
+end
+
+local function GetFruitCode(toolName)
+    if FRUIT_CODES[toolName] then return FRUIT_CODES[toolName] end
+    local base = toolName:gsub(" Fruit", "")
+    if FRUIT_CODES[base .. " Fruit"] then return FRUIT_CODES[base .. " Fruit"] end
+    return base .. "-" .. base
+end
+
 local function FindFruitTool()
     local char = LocalPlayer.Character
     if not char then return nil end
@@ -371,19 +393,6 @@ local function FindFruitTool()
         end
     end
     return nil
-end
-
-local function GetFruitCode(toolName)
-    local base = GetFruitBaseName(toolName)
-    if not base then base = StripSuffix(toolName):gsub(" Fruit", "") end
-    for fname, code in pairs(FRUIT_CODES) do
-        local fl = fname:lower()
-        local fb = fl:gsub(" fruit", "")
-        if fl == toolName:lower() or fb == base then
-            return code
-        end
-    end
-    return base .. "-" .. base
 end
 
 local function TryStoreFruit()
@@ -409,6 +418,32 @@ local function UnequipNonFruits()
         if child:IsA("Tool") and not IsFruitName(child.Name) then
             pcall(function() child.Parent = backpack end)
         end
+    end
+end
+
+local function ServerHop()
+    local servers = {}
+    local success, response = pcall(function()
+        return game:HttpGet(
+            "https://games.roproxy.com/v1/games/" .. CONFIG.PlaceId ..
+            "/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true"
+        )
+    end)
+    if success and response then
+        local ok, data = pcall(function() return HttpService:JSONDecode(response) end)
+        if ok and data and data.data then
+            for _, server in ipairs(data.data) do
+                if server.id ~= game.JobId and server.playing < CONFIG.MaxPlayersForHop then
+                    table.insert(servers, server.id)
+                end
+            end
+        end
+    end
+    if #servers > 0 then
+        local randomServer = servers[math.random(1, #servers)]
+        pcall(function() TeleportService:TeleportToPlaceInstance(CONFIG.PlaceId, randomServer, LocalPlayer) end)
+    else
+        pcall(function() TeleportService:Teleport(CONFIG.PlaceId, LocalPlayer) end)
     end
 end
 
@@ -439,12 +474,12 @@ local function StartFlyToFruit()
         if not hrp then return end
         local target = GetNearestFruit()
         if not target then
-            DisableNoclip()
+            SetCollision(true)
             local bv = hrp:FindFirstChildOfClass("BodyVelocity")
             if bv then bv:Destroy() end
             return
         end
-        if char.HumanoidRootPart.CollisionGroup ~= NOCLIP_GROUP then EnableNoclip() end
+        SetCollision(false)
         if not hrp:FindFirstChildOfClass("BodyVelocity") then
             local bv = Instance.new("BodyVelocity")
             bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
@@ -460,7 +495,7 @@ end
 
 local function StopFlyToFruit()
     if FlyConn then FlyConn:Disconnect(); FlyConn = nil end
-    DisableNoclip()
+    SetCollision(true)
     local char = LocalPlayer.Character
     if char then
         local hrp = char:FindFirstChild("HumanoidRootPart")
@@ -468,8 +503,50 @@ local function StopFlyToFruit()
     end
 end
 
+local function StopAutoFarmFruit()
+    State.AutoFarmFruitEnabled = false
+    if AutoFarmFruitThread then task.cancel(AutoFarmFruitThread); AutoFarmFruitThread = nil end
+    if AutoFlyConn then AutoFlyConn:Disconnect(); AutoFlyConn = nil end
+    SetCollision(true)
+end
+
 local function StartAutoFarmFruit()
-    if AutoFarmFruitThread then return end
+    if State.AutoFarmFruitEnabled and AutoFarmFruitThread then return true end
+
+    if not IsTeamSelected() then
+        selectTeam()
+        task.wait(2.5)
+        if not IsTeamSelected() then return false end
+    end
+
+    State.AutoFarmFruitEnabled = true
+
+    AutoFlyConn = RunService.Heartbeat:Connect(function(dt)
+        if not State.AutoFarmFruitEnabled then return end
+        local char = LocalPlayer.Character
+        if not char then return end
+        local hrp = char:FindFirstChild("HumanoidRootPart")
+        if not hrp then return end
+        local target = GetNearestFruit()
+        if not target then
+            SetCollision(true)
+            local bv = hrp:FindFirstChildOfClass("BodyVelocity")
+            if bv then bv:Destroy() end
+            return
+        end
+        SetCollision(false)
+        if not hrp:FindFirstChildOfClass("BodyVelocity") then
+            local bv = Instance.new("BodyVelocity")
+            bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
+            bv.Velocity = Vector3.new(0, 0, 0)
+            bv.Parent = hrp
+        end
+        local bv = hrp:FindFirstChildOfClass("BodyVelocity")
+        local dir = target.Position - hrp.Position
+        if dir.Magnitude <= CONFIG.ReachDistance then bv.Velocity = Vector3.new(0, 0, 0); return end
+        bv.Velocity = dir.Unit * CONFIG.FlySpeed
+    end)
+
     AutoFarmFruitThread = task.spawn(function()
         local emptyTimer = 0
         local lastCheck = tick()
@@ -479,51 +556,23 @@ local function StartAutoFarmFruit()
             local dt = now - lastCheck
             lastCheck = now
             for inst, data in pairs(Tracked) do
-                if not inst.Parent or not data.Adornee or not data.Adornee.Parent then RemoveFruitTracked(inst) end
+                if not inst.Parent or not data.Adornee or not data.Adornee.Parent then RemoveFruit(inst) end
             end
-            if GetNearestFruit() then
+            if HasAnyFruit() then
                 emptyTimer = 0
-                if not State.FlyEnabled then
-                    State.FlyEnabled = true
-                    StartFlyToFruit()
-                end
-                task.wait(0.3)
-                TryStoreFruit()
             else
                 emptyTimer = emptyTimer + dt
                 if emptyTimer >= CONFIG.FruitLostDelay then
-                    if State.FlyEnabled then
-                        State.FlyEnabled = false
-                        StopFlyToFruit()
-                    end
                     TryStoreFruit()
                     task.wait(CONFIG.ServerHopDelay)
-                    pcall(function()
-                        local url = "https://games.roproxy.com/v1/games/" .. CONFIG.PlaceId .. "/servers/Public?sortOrder=Asc&limit=100&excludeFullGames=true"
-                        local response = game:HttpGet(url)
-                        local data = HttpService:JSONDecode(response)
-                        local servers = {}
-                        for _, s in ipairs(data.data or {}) do
-                            if s.id ~= game.JobId and s.playing < s.maxPlayers then table.insert(servers, s.id) end
-                        end
-                        if #servers > 0 then
-                            TeleportService:TeleportToPlaceInstance(CONFIG.PlaceId, servers[math.random(1, #servers)], LocalPlayer)
-                        end
-                    end)
+                    ServerHop()
                     return
                 end
             end
         end
     end)
-end
 
-local function StopAutoFarmFruit()
-    State.AutoFarmFruitEnabled = false
-    if AutoFarmFruitThread then task.cancel(AutoFarmFruitThread); AutoFarmFruitThread = nil end
-    if State.FlyEnabled then
-        State.FlyEnabled = false
-        StopFlyToFruit()
-    end
+    return true
 end
 
 local AimbotTarget = nil
@@ -605,7 +654,7 @@ local function StartAutoBossFarm()
             task.wait(0.5)
             local boss = FindBoss()
             if boss then
-                EnableNoclip()
+                SetCollision(false)
                 local char = LocalPlayer.Character
                 local hrp = char and char:FindFirstChild("HumanoidRootPart")
                 if hrp then
@@ -630,7 +679,7 @@ local function StartAutoBossFarm()
                     end
                 end
             else
-                DisableNoclip()
+                SetCollision(true)
                 local char = LocalPlayer.Character
                 local hrp = char and char:FindFirstChild("HumanoidRootPart")
                 if hrp then
@@ -645,7 +694,7 @@ end
 local function StopAutoBossFarm()
     State.AutoBossFarmEnabled = false
     if AutoBossFarmThread then task.cancel(AutoBossFarmThread); AutoBossFarmThread = nil end
-    DisableNoclip()
+    SetCollision(true)
 end
 
 local function StartAutoMastery()
@@ -666,7 +715,7 @@ local function StartAutoMastery()
                     end
                 end
                 if nearestNpc then
-                    EnableNoclip()
+                    SetCollision(false)
                     local char = LocalPlayer.Character
                     local hrp = char and char:FindFirstChild("HumanoidRootPart")
                     if hrp then
@@ -692,7 +741,7 @@ end
 local function StopAutoMastery()
     State.AutoMasteryEnabled = false
     if AutoMasteryThread then task.cancel(AutoMasteryThread); AutoMasteryThread = nil end
-    DisableNoclip()
+    SetCollision(true)
 end
 
 local function StartAutoQuest()
@@ -729,7 +778,7 @@ local function StartAutoFarmLevel()
                     end
                 end
                 if nearestMob then
-                    EnableNoclip()
+                    SetCollision(false)
                     local char = LocalPlayer.Character
                     local hrp = char and char:FindFirstChild("HumanoidRootPart")
                     if hrp then
@@ -755,7 +804,7 @@ end
 local function StopAutoFarmLevel()
     State.AutoFarmLevelEnabled = false
     if AutoFarmLevelThread then task.cancel(AutoFarmLevelThread); AutoFarmLevelThread = nil end
-    DisableNoclip()
+    SetCollision(true)
 end
 
 local function StartAutoFarmNoQuest()
@@ -776,7 +825,7 @@ local function StartAutoFarmNoQuest()
                     end
                 end
                 if nearestMob then
-                    EnableNoclip()
+                    SetCollision(false)
                     local char = LocalPlayer.Character
                     local hrp = char and char:FindFirstChild("HumanoidRootPart")
                     if hrp then
@@ -802,7 +851,7 @@ end
 local function StopAutoFarmNoQuest()
     State.AutoFarmNoQuestEnabled = false
     if AutoFarmNoQuestThread then task.cancel(AutoFarmNoQuestThread); AutoFarmNoQuestThread = nil end
-    DisableNoclip()
+    SetCollision(true)
 end
 
 local function StartMobAura()
@@ -849,7 +898,7 @@ local function StartAutoMaterials()
                         if hrp then
                             local name = inst.Name:lower()
                             if name:find(SelectedMaterial:lower(), 1, true) then
-                                EnableNoclip()
+                                SetCollision(false)
                                 local char = LocalPlayer.Character
                                 local charHrp = char and char:FindFirstChild("HumanoidRootPart")
                                 if charHrp then charHrp.CFrame = CFrame.new(hrp.Position + Vector3.new(0, 5, 0)) end
@@ -865,7 +914,7 @@ end
 local function StopAutoMaterials()
     State.AutoMaterialsEnabled = false
     if AutoMaterialsThread then task.cancel(AutoMaterialsThread); AutoMaterialsThread = nil end
-    DisableNoclip()
+    SetCollision(true)
 end
 
 local function StartAutoBones()
@@ -881,7 +930,7 @@ local function StartAutoBones()
                         if name:find("skeleton", 1, true) or name:find("zombie", 1, true) or name:find("mummy", 1, true) then
                             local hrp = inst:FindFirstChild("HumanoidRootPart")
                             if hrp then
-                                EnableNoclip()
+                                SetCollision(false)
                                 local char = LocalPlayer.Character
                                 local charHrp = char and char:FindFirstChild("HumanoidRootPart")
                                 if charHrp then charHrp.CFrame = CFrame.new(hrp.Position + Vector3.new(0, 5, 0)) end
@@ -897,7 +946,7 @@ end
 local function StopAutoBones()
     State.AutoBonesEnabled = false
     if AutoBonesThread then task.cancel(AutoBonesThread); AutoBonesThread = nil end
-    DisableNoclip()
+    SetCollision(true)
 end
 
 local function StartAutoChests()
@@ -1028,10 +1077,7 @@ local function CreatePlayerESP(player)
         PlayerESPTable[player] = { Gui = bb, Label = label, Highlight = hl, Head = head }
     end
     if player.Character then setupCharacter(player.Character) end
-    player.CharacterAdded:Connect(function(char)
-        task.wait(0.5)
-        setupCharacter(char)
-    end)
+    player.CharacterAdded:Connect(function(char) task.wait(0.5); setupCharacter(char) end)
 end
 
 local function RemovePlayerESP(player)
@@ -1085,9 +1131,7 @@ local function StartChams()
 end
 
 local function StopChams()
-    for _, hl in pairs(ChamsTable) do
-        if hl then hl:Destroy() end
-    end
+    for _, hl in pairs(ChamsTable) do if hl then hl:Destroy() end end
     ChamsTable = {}
 end
 
@@ -1125,9 +1169,7 @@ local function StartTracers()
 end
 
 local function StopTracers()
-    for _, line in pairs(TracersTable) do
-        if line then line:Destroy() end
-    end
+    for _, line in pairs(TracersTable) do if line then line:Destroy() end end
     TracersTable = {}
 end
 
@@ -1578,8 +1620,7 @@ local function CreateSlider(parent, text, min, max, default, callback)
     end
     Bar.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = true
-            updateFromX(input.Position.X)
+            dragging = true; updateFromX(input.Position.X)
         end
     end)
     UserInputService.InputChanged:Connect(function(input)
@@ -1588,9 +1629,7 @@ local function CreateSlider(parent, text, min, max, default, callback)
         end
     end)
     UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
-            dragging = false
-        end
+        if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then dragging = false end
     end)
     return SliderFrame
 end
@@ -1722,9 +1761,7 @@ local function CreateDropdown(parent, text, options, defaultIndex, callback)
         optCorner.Parent = OptionBtn
         OptionBtn.MouseButton1Click:Connect(function()
             Label.Text = text .. ": " .. option
-            for _, btn in ipairs(optionButtons) do
-                btn.BackgroundColor3 = CONFIG.ButtonOff
-            end
+            for _, btn in ipairs(optionButtons) do btn.BackgroundColor3 = CONFIG.ButtonOff end
             OptionBtn.BackgroundColor3 = Color3.fromRGB(80, 80, 90)
             if callback then callback(option) end
             isOpen = false
@@ -1749,62 +1786,61 @@ end
 
 local MainPage = CreateTab("Main")
 CreateSection(MainPage, "Auto Farm Level")
-CreateToggle(MainPage, "Auto Farm Level", "AutoFarmLevelEnabled", function(state) if state then StartAutoFarmLevel() else StopAutoFarmLevel() end end)
-CreateToggle(MainPage, "Auto Quest", "AutoQuestEnabled", function(state) if state then StartAutoQuest() else StopAutoQuest() end end)
-CreateToggle(MainPage, "Auto Farm No Quest", "AutoFarmNoQuestEnabled", function(state) if state then StartAutoFarmNoQuest() else StopAutoFarmNoQuest() end end)
-CreateToggle(MainPage, "Mob Aura", "MobAuraEnabled", function(state) if state then StartMobAura() else StopMobAura() end end)
+CreateToggle(MainPage, "Auto Farm Level", "AutoFarmLevelEnabled", function(s) if s then StartAutoFarmLevel() else StopAutoFarmLevel() end end)
+CreateToggle(MainPage, "Auto Quest", "AutoQuestEnabled", function(s) if s then StartAutoQuest() else StopAutoQuest() end end)
+CreateToggle(MainPage, "Auto Farm No Quest", "AutoFarmNoQuestEnabled", function(s) if s then StartAutoFarmNoQuest() else StopAutoFarmNoQuest() end end)
+CreateToggle(MainPage, "Mob Aura", "MobAuraEnabled", function(s) if s then StartMobAura() else StopMobAura() end end)
 
 CreateSection(MainPage, "Boss Farm")
-CreateToggle(MainPage, "Auto Farm Boss", "AutoBossFarmEnabled", function(state) if state then StartAutoBossFarm() else StopAutoBossFarm() end end)
-CreateDropdown(MainPage, "Select Boss", BOSS_LIST, 1, function(selected) SelectedBoss = selected end)
+CreateToggle(MainPage, "Auto Farm Boss", "AutoBossFarmEnabled", function(s) if s then StartAutoBossFarm() else StopAutoBossFarm() end end)
+CreateDropdown(MainPage, "Select Boss", BOSS_LIST, 1, function(sel) SelectedBoss = sel end)
 
 CreateSection(MainPage, "Mastery Farm")
-CreateToggle(MainPage, "Auto Mastery", "AutoMasteryEnabled", function(state) if state then StartAutoMastery() else StopAutoMastery() end end)
-CreateDropdown(MainPage, "Mastery Type", {"Melee", "Sword", "Gun", "Blox Fruit"}, 1, function(selected) MasteryType = selected end)
-CreateToggle(MainPage, "Fast Attack", "MobAuraEnabled", function(state) end)
+CreateToggle(MainPage, "Auto Mastery", "AutoMasteryEnabled", function(s) if s then StartAutoMastery() else StopAutoMastery() end end)
+CreateDropdown(MainPage, "Mastery Type", {"Melee", "Sword", "Gun", "Blox Fruit"}, 1, function(sel) MasteryType = sel end)
 
 CreateSection(MainPage, "Materials / Money")
-CreateToggle(MainPage, "Auto Farm Materials", "AutoMaterialsEnabled", function(state) if state then StartAutoMaterials() else StopAutoMaterials() end end)
-CreateDropdown(MainPage, "Material Type", {"Leather", "Scrap Metal", "Magma Ore", "Angel Wings", "Dragon Scale", "Fish Tail", "Gunpowder", "Mystic Droplet"}, 1, function(selected) SelectedMaterial = selected end)
-CreateToggle(MainPage, "Auto Farm Bones", "AutoBonesEnabled", function(state) if state then StartAutoBones() else StopAutoBones() end end)
-CreateToggle(MainPage, "Auto Farm Chests", "AutoChestsEnabled", function(state) if state then StartAutoChests() else StopAutoChests() end end)
+CreateToggle(MainPage, "Auto Farm Materials", "AutoMaterialsEnabled", function(s) if s then StartAutoMaterials() else StopAutoMaterials() end end)
+CreateDropdown(MainPage, "Material Type", {"Leather", "Scrap Metal", "Magma Ore", "Angel Wings", "Dragon Scale", "Fish Tail", "Gunpowder", "Mystic Droplet"}, 1, function(sel) SelectedMaterial = sel end)
+CreateToggle(MainPage, "Auto Farm Bones", "AutoBonesEnabled", function(s) if s then StartAutoBones() else StopAutoBones() end end)
+CreateToggle(MainPage, "Auto Farm Chests", "AutoChestsEnabled", function(s) if s then StartAutoChests() else StopAutoChests() end end)
 
 local RaidsPage = CreateTab("Raids")
 CreateSection(RaidsPage, "Auto Raid")
-CreateToggle(RaidsPage, "Auto Raid", "AutoRaidEnabled", function(state) if state then StartAutoRaid() else StopAutoRaid() end end)
-CreateDropdown(RaidsPage, "Chip Type", {"Flame", "Ice", "Quake", "Light", "Dark", "Spider", "Rumble", "Magma", "Buddha", "Love", "Creation", "Dough", "Shadow", "Venom", "Control", "Spirit", "Dragon", "Leopard", "Kitsune"}, 1, function(selected) SelectedChip = selected end)
-CreateDropdown(RaidsPage, "Raid Weapon", {"Melee", "Sword", "Gun", "Blox Fruit"}, 1, function(selected) RaidWeapon = selected end)
-CreateToggle(RaidsPage, "Kill Aura", "KillAuraEnabled", function(state) if state then StartKillAura() else StopKillAura() end end)
+CreateToggle(RaidsPage, "Auto Raid", "AutoRaidEnabled", function(s) if s then StartAutoRaid() else StopAutoRaid() end end)
+CreateDropdown(RaidsPage, "Chip Type", {"Flame", "Ice", "Quake", "Light", "Dark", "Spider", "Rumble", "Magma", "Buddha", "Love", "Creation", "Dough", "Shadow", "Venom", "Control", "Spirit", "Dragon", "Leopard", "Kitsune"}, 1, function(sel) SelectedChip = sel end)
+CreateDropdown(RaidsPage, "Raid Weapon", {"Melee", "Sword", "Gun", "Blox Fruit"}, 1, function(sel) RaidWeapon = sel end)
+CreateToggle(RaidsPage, "Kill Aura", "KillAuraEnabled", function(s) if s then StartKillAura() else StopKillAura() end end)
 
 local CombatPage = CreateTab("Combat")
 CreateSection(CombatPage, "Aimbot")
-CreateToggle(CombatPage, "Skill Aimbot", "AimbotEnabled", function(state) if state then StartAimbot() else StopAimbot() end end)
+CreateToggle(CombatPage, "Skill Aimbot", "AimbotEnabled", function(s) if s then StartAimbot() else StopAimbot() end end)
 
 local VisualsPage = CreateTab("Visuals")
 CreateSection(VisualsPage, "Lighting")
-CreateToggle(VisualsPage, "Fullbright", "FullbrightEnabled", function(state) if state then StartFullbright() else StopFullbright() end end)
-CreateToggle(VisualsPage, "Remove Fog", "RemoveFogEnabled", function(state) if state then StartRemoveFog() else StopRemoveFog() end end)
+CreateToggle(VisualsPage, "Fullbright", "FullbrightEnabled", function(s) if s then StartFullbright() else StopFullbright() end end)
+CreateToggle(VisualsPage, "Remove Fog", "RemoveFogEnabled", function(s) if s then StartRemoveFog() else StopRemoveFog() end end)
 CreateSection(VisualsPage, "Player")
-CreateToggle(VisualsPage, "Player ESP", "PlayerESPEnabled", function(state) if state then StartPlayerESP() else StopPlayerESP() end end)
-CreateToggle(VisualsPage, "Chams", "ChamsEnabled", function(state) if state then StartChams() else StopChams() end end)
-CreateToggle(VisualsPage, "Tracers", "TracersEnabled", function(state) if state then StartTracers() else StopTracers() end end)
+CreateToggle(VisualsPage, "Player ESP", "PlayerESPEnabled", function(s) if s then StartPlayerESP() else StopPlayerESP() end end)
+CreateToggle(VisualsPage, "Chams", "ChamsEnabled", function(s) if s then StartChams() else StopChams() end end)
+CreateToggle(VisualsPage, "Tracers", "TracersEnabled", function(s) if s then StartTracers() else StopTracers() end end)
 
 local FruitPage = CreateTab("Fruit")
 CreateSection(FruitPage, "Fruit Functions")
-CreateToggle(FruitPage, "See Fruits", "ESPEnabled", function(state)
+CreateToggle(FruitPage, "See Fruits", "ESPEnabled", function(s)
     for _, data in pairs(Tracked) do
-        if data.Gui then data.Gui.Enabled = state end
-        if data.Highlight then data.Highlight.Enabled = state end
+        if data.Gui then data.Gui.Enabled = s end
+        if data.Highlight then data.Highlight.Enabled = s end
     end
 end)
-CreateToggle(FruitPage, "Fly to Fruit", "FlyEnabled", function(state) if state then StartFlyToFruit() else StopFlyToFruit() end end)
-CreateToggle(FruitPage, "Auto Store Fruit", "AutoStoreEnabled", function(state) if state then StartAutoStore() else StopAutoStore() end end)
-CreateToggle(FruitPage, "Auto Farm Fruit", "AutoFarmFruitEnabled", function(state) if state then StartAutoFarmFruit() else StopAutoFarmFruit() end end)
+CreateToggle(FruitPage, "Fly to Fruit", "FlyEnabled", function(s) if s then StartFlyToFruit() else StopFlyToFruit() end end)
+CreateToggle(FruitPage, "Auto Store Fruit", "AutoStoreEnabled", function(s) if s then StartAutoStore() else StopAutoStore() end end)
+CreateToggle(FruitPage, "Auto Farm Fruit", "AutoFarmFruitEnabled", function(s) if s then StartAutoFarmFruit() else StopAutoFarmFruit() end end)
 
 local SettingsPage = CreateTab("Settings")
 CreateSection(SettingsPage, "UI")
 CreateToggle(SettingsPage, "Show FPS", "ShowFPSEnabled", nil)
-CreateToggle(SettingsPage, "Lock Menu Button", "MenuLocked", function(state) MenuLocked = state end)
+CreateToggle(SettingsPage, "Lock Menu Button", "MenuLockedState", function(s) MenuLocked = s end)
 CreateSlider(SettingsPage, "Button Transparency", 0, 100, 0, function(value)
     local t = value / 100
     ToggleBtn.BackgroundTransparency = t
@@ -1873,21 +1909,12 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
-loadConfig()
-
-if State.ESPEnabled then
-    for _, data in pairs(Tracked) do
-        if data.Gui then data.Gui.Enabled = true end
-        if data.Highlight then data.Highlight.Enabled = true end
-    end
-end
-
 ScanFruits()
 task.spawn(function()
     while task.wait(1) do
         ScanFruits()
         for inst, data in pairs(Tracked) do
-            if not inst.Parent or not data.Adornee or not data.Adornee.Parent then RemoveFruitTracked(inst) end
+            if not inst.Parent or not data.Adornee or not data.Adornee.Parent then RemoveFruit(inst) end
         end
     end
 end)
@@ -1896,7 +1923,7 @@ Workspace.DescendantAdded:Connect(function(inst)
     if inst:IsA("Tool") or inst:IsA("Model") then task.defer(TryTrackFruit, inst) end
 end)
 Workspace.DescendantRemoving:Connect(function(inst)
-    if Tracked[inst] then RemoveFruitTracked(inst) end
+    if Tracked[inst] then RemoveFruit(inst) end
 end)
 
 RunService.RenderStepped:Connect(function()
@@ -1913,20 +1940,14 @@ end)
 
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(1)
-    if not State.FlyEnabled then DisableNoclip() end
+    if not State.FlyEnabled and not State.AutoFarmFruitEnabled then SetCollision(true) end
 end)
 
 task.spawn(function()
     task.wait(2)
-    if State.AutoFarmFruitEnabled then
-        StartAutoFarmFruit()
-    end
-    if State.AutoStoreEnabled then
-        StartAutoStore()
-    end
-    if State.FlyEnabled then
-        StartFlyToFruit()
-    end
+    if State.AutoFarmFruitEnabled then StartAutoFarmFruit() end
+    if State.AutoStoreEnabled then StartAutoStore() end
+    if State.FlyEnabled then StartFlyToFruit() end
     if State.AutoFarmLevelEnabled then StartAutoFarmLevel() end
     if State.AutoQuestEnabled then StartAutoQuest() end
     if State.AutoFarmNoQuestEnabled then StartAutoFarmNoQuest() end
@@ -1944,4 +1965,10 @@ task.spawn(function()
     if State.PlayerESPEnabled then StartPlayerESP() end
     if State.ChamsEnabled then StartChams() end
     if State.TracersEnabled then StartTracers() end
+    if State.ESPEnabled then
+        for _, data in pairs(Tracked) do
+            if data.Gui then data.Gui.Enabled = true end
+            if data.Highlight then data.Highlight.Enabled = true end
+        end
+    end
 end)
