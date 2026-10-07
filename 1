@@ -27,6 +27,7 @@ local CONFIG = {
     FruitLostDelay = 3,
     MaxFruitSize = 5,
     MaxFruitParts = 15,
+    ConfigFile = "windhaser_config.json",
 }
 
 local FRUIT_CODES = {
@@ -78,27 +79,29 @@ local MenuLocked = false
 local CurrentKeybind = Enum.KeyCode.RightShift
 local WaitingForKey = false
 
-local ESPEnabled = false
-local FlyEnabled = false
-local AutoStoreEnabled = false
-local AutoFarmFruitEnabled = false
-local AimbotEnabled = false
-local AutoBossFarmEnabled = false
-local AutoMasteryEnabled = false
-local AutoQuestEnabled = false
-local AutoFarmLevelEnabled = false
-local AutoFarmNoQuestEnabled = false
-local MobAuraEnabled = false
-local AutoMaterialsEnabled = false
-local AutoBonesEnabled = false
-local AutoChestsEnabled = false
-local AutoRaidEnabled = false
-local FullbrightEnabled = false
-local RemoveFogEnabled = false
-local PlayerESPEnabled = false
-local ChamsEnabled = false
-local TracersEnabled = false
-local KillAuraEnabled = false
+local State = {
+    ESPEnabled = false,
+    FlyEnabled = false,
+    AutoStoreEnabled = false,
+    AutoFarmFruitEnabled = false,
+    AimbotEnabled = false,
+    AutoBossFarmEnabled = false,
+    AutoMasteryEnabled = false,
+    AutoQuestEnabled = false,
+    AutoFarmLevelEnabled = false,
+    AutoFarmNoQuestEnabled = false,
+    MobAuraEnabled = false,
+    AutoMaterialsEnabled = false,
+    AutoBonesEnabled = false,
+    AutoChestsEnabled = false,
+    AutoRaidEnabled = false,
+    FullbrightEnabled = false,
+    RemoveFogEnabled = false,
+    PlayerESPEnabled = false,
+    ChamsEnabled = false,
+    TracersEnabled = false,
+    KillAuraEnabled = false,
+}
 
 local Tracked = {}
 local FlyConn = nil
@@ -123,6 +126,27 @@ local SelectedMaterial = "Leather"
 local SelectedChip = "Flame"
 local MasteryType = "Melee"
 local RaidWeapon = "Melee"
+
+local function loadConfig()
+    if not (isfile and readfile) then return end
+    local ok, data = pcall(function()
+        return HttpService:JSONDecode(readfile(CONFIG.ConfigFile))
+    end)
+    if ok and type(data) == "table" then
+        for k, v in pairs(data) do
+            if State[k] ~= nil and type(v) == "boolean" then
+                State[k] = v
+            end
+        end
+    end
+end
+
+local function saveConfig()
+    if not (writefile and isfile) then return end
+    pcall(function()
+        writefile(CONFIG.ConfigFile, HttpService:JSONEncode(State))
+    end)
+end
 
 local NOCLIP_GROUP = "WindHaserNoclip"
 pcall(function() PhysicsService:RegisterCollisionGroup(NOCLIP_GROUP) end)
@@ -298,7 +322,7 @@ local function TryTrackFruit(inst)
     local bb, label = CreateFruitBillboard(adornee, inst.Name, CONFIG.FruitColor)
     local hl = CreateFruitOutline(adornee, CONFIG.FruitColor)
     Tracked[inst] = { Gui = bb, Label = label, Highlight = hl, Adornee = adornee, Name = inst.Name }
-    if not ESPEnabled then bb.Enabled = false; hl.Enabled = false end
+    if not State.ESPEnabled then bb.Enabled = false; hl.Enabled = false end
 end
 
 local function RemoveFruitTracked(inst)
@@ -391,7 +415,7 @@ end
 local function StartAutoStore()
     if AutoStoreThread then return end
     AutoStoreThread = task.spawn(function()
-        while AutoStoreEnabled do
+        while State.AutoStoreEnabled do
             task.wait(0.5)
             local tool = FindFruitTool()
             if tool then TryStoreFruit() end
@@ -401,14 +425,14 @@ local function StartAutoStore()
 end
 
 local function StopAutoStore()
-    AutoStoreEnabled = false
+    State.AutoStoreEnabled = false
     if AutoStoreThread then task.cancel(AutoStoreThread); AutoStoreThread = nil end
 end
 
 local function StartFlyToFruit()
     if FlyConn then FlyConn:Disconnect(); FlyConn = nil end
     FlyConn = RunService.Heartbeat:Connect(function(dt)
-        if not FlyEnabled then return end
+        if not State.FlyEnabled then return end
         local char = LocalPlayer.Character
         if not char then return end
         local hrp = char:FindFirstChild("HumanoidRootPart")
@@ -449,7 +473,7 @@ local function StartAutoFarmFruit()
     AutoFarmFruitThread = task.spawn(function()
         local emptyTimer = 0
         local lastCheck = tick()
-        while AutoFarmFruitEnabled do
+        while State.AutoFarmFruitEnabled do
             task.wait(0.5)
             local now = tick()
             local dt = now - lastCheck
@@ -459,13 +483,19 @@ local function StartAutoFarmFruit()
             end
             if GetNearestFruit() then
                 emptyTimer = 0
-                if not FlyEnabled then FlyEnabled = true; StartFlyToFruit() end
+                if not State.FlyEnabled then
+                    State.FlyEnabled = true
+                    StartFlyToFruit()
+                end
                 task.wait(0.3)
                 TryStoreFruit()
             else
                 emptyTimer = emptyTimer + dt
                 if emptyTimer >= CONFIG.FruitLostDelay then
-                    if FlyEnabled then FlyEnabled = false; StopFlyToFruit() end
+                    if State.FlyEnabled then
+                        State.FlyEnabled = false
+                        StopFlyToFruit()
+                    end
                     TryStoreFruit()
                     task.wait(CONFIG.ServerHopDelay)
                     pcall(function()
@@ -488,9 +518,12 @@ local function StartAutoFarmFruit()
 end
 
 local function StopAutoFarmFruit()
-    AutoFarmFruitEnabled = false
+    State.AutoFarmFruitEnabled = false
     if AutoFarmFruitThread then task.cancel(AutoFarmFruitThread); AutoFarmFruitThread = nil end
-    if FlyEnabled then FlyEnabled = false; StopFlyToFruit() end
+    if State.FlyEnabled then
+        State.FlyEnabled = false
+        StopFlyToFruit()
+    end
 end
 
 local AimbotTarget = nil
@@ -515,7 +548,7 @@ end
 local function StartAimbot()
     if AimbotConn then AimbotConn:Disconnect(); AimbotConn = nil end
     AimbotConn = RunService.RenderStepped:Connect(function()
-        if not AimbotEnabled then return end
+        if not State.AimbotEnabled then return end
         local target = GetClosestTarget()
         if not target or not target.Character then return end
         local targetHead = target.Character:FindFirstChild("Head")
@@ -524,7 +557,7 @@ local function StartAimbot()
         AimbotTarget = target
     end)
     task.spawn(function()
-        while AimbotEnabled do
+        while State.AimbotEnabled do
             task.wait(0.1)
             if AimbotTarget and AimbotTarget.Character then
                 for _, key in ipairs(SkillKeys) do
@@ -568,7 +601,7 @@ end
 local function StartAutoBossFarm()
     if AutoBossFarmThread then return end
     AutoBossFarmThread = task.spawn(function()
-        while AutoBossFarmEnabled do
+        while State.AutoBossFarmEnabled do
             task.wait(0.5)
             local boss = FindBoss()
             if boss then
@@ -610,7 +643,7 @@ local function StartAutoBossFarm()
 end
 
 local function StopAutoBossFarm()
-    AutoBossFarmEnabled = false
+    State.AutoBossFarmEnabled = false
     if AutoBossFarmThread then task.cancel(AutoBossFarmThread); AutoBossFarmThread = nil end
     DisableNoclip()
 end
@@ -618,7 +651,7 @@ end
 local function StartAutoMastery()
     if AutoMasteryThread then return end
     AutoMasteryThread = task.spawn(function()
-        while AutoMasteryEnabled do
+        while State.AutoMasteryEnabled do
             task.wait(0.5)
             local myPos = GetMyPosition()
             if myPos then
@@ -657,7 +690,7 @@ local function StartAutoMastery()
 end
 
 local function StopAutoMastery()
-    AutoMasteryEnabled = false
+    State.AutoMasteryEnabled = false
     if AutoMasteryThread then task.cancel(AutoMasteryThread); AutoMasteryThread = nil end
     DisableNoclip()
 end
@@ -666,7 +699,7 @@ local function StartAutoQuest()
     if AutoQuestThread then return end
     AutoQuestThread = task.spawn(function()
         local commF = GetCommF()
-        while AutoQuestEnabled do
+        while State.AutoQuestEnabled do
             task.wait(2)
             if commF then pcall(function() commF:InvokeServer("StartQuest") end) end
         end
@@ -674,14 +707,14 @@ local function StartAutoQuest()
 end
 
 local function StopAutoQuest()
-    AutoQuestEnabled = false
+    State.AutoQuestEnabled = false
     if AutoQuestThread then task.cancel(AutoQuestThread); AutoQuestThread = nil end
 end
 
 local function StartAutoFarmLevel()
     if AutoFarmLevelThread then return end
     AutoFarmLevelThread = task.spawn(function()
-        while AutoFarmLevelEnabled do
+        while State.AutoFarmLevelEnabled do
             task.wait(0.5)
             local myPos = GetMyPosition()
             if myPos then
@@ -720,7 +753,7 @@ local function StartAutoFarmLevel()
 end
 
 local function StopAutoFarmLevel()
-    AutoFarmLevelEnabled = false
+    State.AutoFarmLevelEnabled = false
     if AutoFarmLevelThread then task.cancel(AutoFarmLevelThread); AutoFarmLevelThread = nil end
     DisableNoclip()
 end
@@ -728,7 +761,7 @@ end
 local function StartAutoFarmNoQuest()
     if AutoFarmNoQuestThread then return end
     AutoFarmNoQuestThread = task.spawn(function()
-        while AutoFarmNoQuestEnabled do
+        while State.AutoFarmNoQuestEnabled do
             task.wait(0.5)
             local myPos = GetMyPosition()
             if myPos then
@@ -767,7 +800,7 @@ local function StartAutoFarmNoQuest()
 end
 
 local function StopAutoFarmNoQuest()
-    AutoFarmNoQuestEnabled = false
+    State.AutoFarmNoQuestEnabled = false
     if AutoFarmNoQuestThread then task.cancel(AutoFarmNoQuestThread); AutoFarmNoQuestThread = nil end
     DisableNoclip()
 end
@@ -775,7 +808,7 @@ end
 local function StartMobAura()
     if MobAuraThread then return end
     MobAuraThread = task.spawn(function()
-        while MobAuraEnabled do
+        while State.MobAuraEnabled do
             task.wait(0.3)
             local myPos = GetMyPosition()
             if myPos then
@@ -799,14 +832,14 @@ local function StartMobAura()
 end
 
 local function StopMobAura()
-    MobAuraEnabled = false
+    State.MobAuraEnabled = false
     if MobAuraThread then task.cancel(MobAuraThread); MobAuraThread = nil end
 end
 
 local function StartAutoMaterials()
     if AutoMaterialsThread then return end
     AutoMaterialsThread = task.spawn(function()
-        while AutoMaterialsEnabled do
+        while State.AutoMaterialsEnabled do
             task.wait(0.5)
             local myPos = GetMyPosition()
             if myPos then
@@ -830,7 +863,7 @@ local function StartAutoMaterials()
 end
 
 local function StopAutoMaterials()
-    AutoMaterialsEnabled = false
+    State.AutoMaterialsEnabled = false
     if AutoMaterialsThread then task.cancel(AutoMaterialsThread); AutoMaterialsThread = nil end
     DisableNoclip()
 end
@@ -838,7 +871,7 @@ end
 local function StartAutoBones()
     if AutoBonesThread then return end
     AutoBonesThread = task.spawn(function()
-        while AutoBonesEnabled do
+        while State.AutoBonesEnabled do
             task.wait(0.5)
             local myPos = GetMyPosition()
             if myPos then
@@ -862,7 +895,7 @@ local function StartAutoBones()
 end
 
 local function StopAutoBones()
-    AutoBonesEnabled = false
+    State.AutoBonesEnabled = false
     if AutoBonesThread then task.cancel(AutoBonesThread); AutoBonesThread = nil end
     DisableNoclip()
 end
@@ -870,7 +903,7 @@ end
 local function StartAutoChests()
     if AutoChestsThread then return end
     AutoChestsThread = task.spawn(function()
-        while AutoChestsEnabled do
+        while State.AutoChestsEnabled do
             task.wait(1)
             local myPos = GetMyPosition()
             if myPos then
@@ -890,7 +923,7 @@ local function StartAutoChests()
 end
 
 local function StopAutoChests()
-    AutoChestsEnabled = false
+    State.AutoChestsEnabled = false
     if AutoChestsThread then task.cancel(AutoChestsThread); AutoChestsThread = nil end
 end
 
@@ -898,7 +931,7 @@ local function StartAutoRaid()
     if AutoRaidThread then return end
     AutoRaidThread = task.spawn(function()
         local commF = GetCommF()
-        while AutoRaidEnabled do
+        while State.AutoRaidEnabled do
             task.wait(2)
             if commF then pcall(function() commF:InvokeServer("RequestRaid") end) end
         end
@@ -906,7 +939,7 @@ local function StartAutoRaid()
 end
 
 local function StopAutoRaid()
-    AutoRaidEnabled = false
+    State.AutoRaidEnabled = false
     if AutoRaidThread then task.cancel(AutoRaidThread); AutoRaidThread = nil end
 end
 
@@ -922,7 +955,7 @@ local normalLighting = {
 local function StartFullbright()
     if FullbrightThread then return end
     FullbrightThread = task.spawn(function()
-        while FullbrightEnabled do
+        while State.FullbrightEnabled do
             Lighting.Brightness = 2
             Lighting.ClockTime = 12
             Lighting.FogEnd = 100000
@@ -935,7 +968,7 @@ local function StartFullbright()
 end
 
 local function StopFullbright()
-    FullbrightEnabled = false
+    State.FullbrightEnabled = false
     if FullbrightThread then task.cancel(FullbrightThread); FullbrightThread = nil end
     Lighting.Brightness = normalLighting.Brightness
     Lighting.ClockTime = normalLighting.ClockTime
@@ -1014,7 +1047,7 @@ local function StartPlayerESP()
         if player ~= LocalPlayer then CreatePlayerESP(player) end
     end
     Players.PlayerAdded:Connect(function(player)
-        if PlayerESPEnabled then CreatePlayerESP(player) end
+        if State.PlayerESPEnabled then CreatePlayerESP(player) end
     end)
 end
 
@@ -1045,7 +1078,7 @@ local function StartChams()
         end
     end
     Workspace.DescendantAdded:Connect(function(inst)
-        if ChamsEnabled and inst:IsA("Model") and inst:FindFirstChild("Humanoid") and not inst:FindFirstChildOfClass("Accessory") then
+        if State.ChamsEnabled and inst:IsA("Model") and inst:FindFirstChild("Humanoid") and not inst:FindFirstChildOfClass("Accessory") then
             CreateChams(inst)
         end
     end)
@@ -1083,7 +1116,7 @@ local function StartTracers()
     end
     Players.PlayerAdded:Connect(function(player)
         player.CharacterAdded:Connect(function(char)
-            if TracersEnabled then
+            if State.TracersEnabled then
                 local hrp = char:WaitForChild("HumanoidRootPart", 5)
                 if hrp then CreateTracer(hrp) end
             end
@@ -1101,7 +1134,7 @@ end
 local function StartKillAura()
     if KillAuraThread then return end
     KillAuraThread = task.spawn(function()
-        while KillAuraEnabled do
+        while State.KillAuraEnabled do
             task.wait(0.3)
             local myPos = GetMyPosition()
             if myPos then
@@ -1125,7 +1158,7 @@ local function StartKillAura()
 end
 
 local function StopKillAura()
-    KillAuraEnabled = false
+    State.KillAuraEnabled = false
     if KillAuraThread then task.cancel(KillAuraThread); KillAuraThread = nil end
 end
 
@@ -1421,8 +1454,8 @@ local function CreateTab(name)
     return Page
 end
 
-local function CreateToggle(parent, text, default, callback)
-    local state = default or false
+local function CreateToggle(parent, text, stateKey, callback)
+    local state = State[stateKey] or false
     local ToggleFrame = Instance.new("Frame")
     ToggleFrame.Size = UDim2.new(1, 0, 0, 26)
     ToggleFrame.BackgroundColor3 = CONFIG.ButtonOff
@@ -1471,10 +1504,12 @@ local function CreateToggle(parent, text, default, callback)
     ClickBtn.Parent = ToggleFrame
     ClickBtn.MouseButton1Click:Connect(function()
         state = not state
+        State[stateKey] = state
         SwitchBg.BackgroundColor3 = state and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(60, 60, 70)
         Knob.Position = state and UDim2.new(1, -14, 0, 2) or UDim2.new(0, 2, 0, 2)
         Knob.BackgroundColor3 = state and Color3.fromRGB(40, 40, 50) or Color3.fromRGB(255, 255, 255)
         if callback then callback(state) end
+        saveConfig()
     end)
     return ClickBtn
 end
@@ -1714,63 +1749,62 @@ end
 
 local MainPage = CreateTab("Main")
 CreateSection(MainPage, "Auto Farm Level")
-CreateToggle(MainPage, "Auto Farm Level", false, function(state) AutoFarmLevelEnabled = state; if state then StartAutoFarmLevel() else StopAutoFarmLevel() end end)
-CreateToggle(MainPage, "Auto Quest", false, function(state) AutoQuestEnabled = state; if state then StartAutoQuest() else StopAutoQuest() end end)
-CreateToggle(MainPage, "Auto Farm No Quest", false, function(state) AutoFarmNoQuestEnabled = state; if state then StartAutoFarmNoQuest() else StopAutoFarmNoQuest() end end)
-CreateToggle(MainPage, "Mob Aura", false, function(state) MobAuraEnabled = state; if state then StartMobAura() else StopMobAura() end end)
+CreateToggle(MainPage, "Auto Farm Level", "AutoFarmLevelEnabled", function(state) if state then StartAutoFarmLevel() else StopAutoFarmLevel() end end)
+CreateToggle(MainPage, "Auto Quest", "AutoQuestEnabled", function(state) if state then StartAutoQuest() else StopAutoQuest() end end)
+CreateToggle(MainPage, "Auto Farm No Quest", "AutoFarmNoQuestEnabled", function(state) if state then StartAutoFarmNoQuest() else StopAutoFarmNoQuest() end end)
+CreateToggle(MainPage, "Mob Aura", "MobAuraEnabled", function(state) if state then StartMobAura() else StopMobAura() end end)
 
 CreateSection(MainPage, "Boss Farm")
-CreateToggle(MainPage, "Auto Farm Boss", false, function(state) AutoBossFarmEnabled = state; if state then StartAutoBossFarm() else StopAutoBossFarm() end end)
+CreateToggle(MainPage, "Auto Farm Boss", "AutoBossFarmEnabled", function(state) if state then StartAutoBossFarm() else StopAutoBossFarm() end end)
 CreateDropdown(MainPage, "Select Boss", BOSS_LIST, 1, function(selected) SelectedBoss = selected end)
 
 CreateSection(MainPage, "Mastery Farm")
-CreateToggle(MainPage, "Auto Mastery", false, function(state) AutoMasteryEnabled = state; if state then StartAutoMastery() else StopAutoMastery() end end)
+CreateToggle(MainPage, "Auto Mastery", "AutoMasteryEnabled", function(state) if state then StartAutoMastery() else StopAutoMastery() end end)
 CreateDropdown(MainPage, "Mastery Type", {"Melee", "Sword", "Gun", "Blox Fruit"}, 1, function(selected) MasteryType = selected end)
-CreateToggle(MainPage, "Fast Attack", false)
+CreateToggle(MainPage, "Fast Attack", "MobAuraEnabled", function(state) end)
 
 CreateSection(MainPage, "Materials / Money")
-CreateToggle(MainPage, "Auto Farm Materials", false, function(state) AutoMaterialsEnabled = state; if state then StartAutoMaterials() else StopAutoMaterials() end end)
+CreateToggle(MainPage, "Auto Farm Materials", "AutoMaterialsEnabled", function(state) if state then StartAutoMaterials() else StopAutoMaterials() end end)
 CreateDropdown(MainPage, "Material Type", {"Leather", "Scrap Metal", "Magma Ore", "Angel Wings", "Dragon Scale", "Fish Tail", "Gunpowder", "Mystic Droplet"}, 1, function(selected) SelectedMaterial = selected end)
-CreateToggle(MainPage, "Auto Farm Bones", false, function(state) AutoBonesEnabled = state; if state then StartAutoBones() else StopAutoBones() end end)
-CreateToggle(MainPage, "Auto Farm Chests", false, function(state) AutoChestsEnabled = state; if state then StartAutoChests() else StopAutoChests() end end)
+CreateToggle(MainPage, "Auto Farm Bones", "AutoBonesEnabled", function(state) if state then StartAutoBones() else StopAutoBones() end end)
+CreateToggle(MainPage, "Auto Farm Chests", "AutoChestsEnabled", function(state) if state then StartAutoChests() else StopAutoChests() end end)
 
 local RaidsPage = CreateTab("Raids")
 CreateSection(RaidsPage, "Auto Raid")
-CreateToggle(RaidsPage, "Auto Raid", false, function(state) AutoRaidEnabled = state; if state then StartAutoRaid() else StopAutoRaid() end end)
+CreateToggle(RaidsPage, "Auto Raid", "AutoRaidEnabled", function(state) if state then StartAutoRaid() else StopAutoRaid() end end)
 CreateDropdown(RaidsPage, "Chip Type", {"Flame", "Ice", "Quake", "Light", "Dark", "Spider", "Rumble", "Magma", "Buddha", "Love", "Creation", "Dough", "Shadow", "Venom", "Control", "Spirit", "Dragon", "Leopard", "Kitsune"}, 1, function(selected) SelectedChip = selected end)
 CreateDropdown(RaidsPage, "Raid Weapon", {"Melee", "Sword", "Gun", "Blox Fruit"}, 1, function(selected) RaidWeapon = selected end)
-CreateToggle(RaidsPage, "Kill Aura", false, function(state) KillAuraEnabled = state; if state then StartKillAura() else StopKillAura() end end)
+CreateToggle(RaidsPage, "Kill Aura", "KillAuraEnabled", function(state) if state then StartKillAura() else StopKillAura() end end)
 
 local CombatPage = CreateTab("Combat")
 CreateSection(CombatPage, "Aimbot")
-CreateToggle(CombatPage, "Skill Aimbot", false, function(state) AimbotEnabled = state; if state then StartAimbot() else StopAimbot() end end)
+CreateToggle(CombatPage, "Skill Aimbot", "AimbotEnabled", function(state) if state then StartAimbot() else StopAimbot() end end)
 
 local VisualsPage = CreateTab("Visuals")
 CreateSection(VisualsPage, "Lighting")
-CreateToggle(VisualsPage, "Fullbright", false, function(state) FullbrightEnabled = state; if state then StartFullbright() else StopFullbright() end end)
-CreateToggle(VisualsPage, "Remove Fog", false, function(state) RemoveFogEnabled = state; if state then StartRemoveFog() else StopRemoveFog() end end)
+CreateToggle(VisualsPage, "Fullbright", "FullbrightEnabled", function(state) if state then StartFullbright() else StopFullbright() end end)
+CreateToggle(VisualsPage, "Remove Fog", "RemoveFogEnabled", function(state) if state then StartRemoveFog() else StopRemoveFog() end end)
 CreateSection(VisualsPage, "Player")
-CreateToggle(VisualsPage, "Player ESP", false, function(state) PlayerESPEnabled = state; if state then StartPlayerESP() else StopPlayerESP() end end)
-CreateToggle(VisualsPage, "Chams", false, function(state) ChamsEnabled = state; if state then StartChams() else StopChams() end end)
-CreateToggle(VisualsPage, "Tracers", false, function(state) TracersEnabled = state; if state then StartTracers() else StopTracers() end end)
+CreateToggle(VisualsPage, "Player ESP", "PlayerESPEnabled", function(state) if state then StartPlayerESP() else StopPlayerESP() end end)
+CreateToggle(VisualsPage, "Chams", "ChamsEnabled", function(state) if state then StartChams() else StopChams() end end)
+CreateToggle(VisualsPage, "Tracers", "TracersEnabled", function(state) if state then StartTracers() else StopTracers() end end)
 
 local FruitPage = CreateTab("Fruit")
 CreateSection(FruitPage, "Fruit Functions")
-CreateToggle(FruitPage, "See Fruits", false, function(state)
-    ESPEnabled = state
+CreateToggle(FruitPage, "See Fruits", "ESPEnabled", function(state)
     for _, data in pairs(Tracked) do
         if data.Gui then data.Gui.Enabled = state end
         if data.Highlight then data.Highlight.Enabled = state end
     end
 end)
-CreateToggle(FruitPage, "Fly to Fruit", false, function(state) FlyEnabled = state; if state then StartFlyToFruit() else StopFlyToFruit() end end)
-CreateToggle(FruitPage, "Auto Store Fruit", false, function(state) AutoStoreEnabled = state; if state then StartAutoStore() else StopAutoStore() end end)
-CreateToggle(FruitPage, "Auto Farm Fruit", false, function(state) AutoFarmFruitEnabled = state; if state then StartAutoFarmFruit() else StopAutoFarmFruit() end end)
+CreateToggle(FruitPage, "Fly to Fruit", "FlyEnabled", function(state) if state then StartFlyToFruit() else StopFlyToFruit() end end)
+CreateToggle(FruitPage, "Auto Store Fruit", "AutoStoreEnabled", function(state) if state then StartAutoStore() else StopAutoStore() end end)
+CreateToggle(FruitPage, "Auto Farm Fruit", "AutoFarmFruitEnabled", function(state) if state then StartAutoFarmFruit() else StopAutoFarmFruit() end end)
 
 local SettingsPage = CreateTab("Settings")
 CreateSection(SettingsPage, "UI")
-CreateToggle(SettingsPage, "Show FPS", false)
-CreateToggle(SettingsPage, "Lock Menu Button", false, function(state) MenuLocked = state end)
+CreateToggle(SettingsPage, "Show FPS", "ShowFPSEnabled", nil)
+CreateToggle(SettingsPage, "Lock Menu Button", "MenuLocked", function(state) MenuLocked = state end)
 CreateSlider(SettingsPage, "Button Transparency", 0, 100, 0, function(value)
     local t = value / 100
     ToggleBtn.BackgroundTransparency = t
@@ -1839,6 +1873,15 @@ UserInputService.InputChanged:Connect(function(input)
     end
 end)
 
+loadConfig()
+
+if State.ESPEnabled then
+    for _, data in pairs(Tracked) do
+        if data.Gui then data.Gui.Enabled = true end
+        if data.Highlight then data.Highlight.Enabled = true end
+    end
+end
+
 ScanFruits()
 task.spawn(function()
     while task.wait(1) do
@@ -1857,7 +1900,7 @@ Workspace.DescendantRemoving:Connect(function(inst)
 end)
 
 RunService.RenderStepped:Connect(function()
-    if not ESPEnabled then return end
+    if not State.ESPEnabled then return end
     local myPos = GetMyPosition()
     if not myPos then return end
     for _, data in pairs(Tracked) do
@@ -1870,5 +1913,35 @@ end)
 
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(1)
-    if not FlyEnabled then DisableNoclip() end
+    if not State.FlyEnabled then DisableNoclip() end
+end)
+
+task.spawn(function()
+    task.wait(2)
+    if State.AutoFarmFruitEnabled then
+        StartAutoFarmFruit()
+    end
+    if State.AutoStoreEnabled then
+        StartAutoStore()
+    end
+    if State.FlyEnabled then
+        StartFlyToFruit()
+    end
+    if State.AutoFarmLevelEnabled then StartAutoFarmLevel() end
+    if State.AutoQuestEnabled then StartAutoQuest() end
+    if State.AutoFarmNoQuestEnabled then StartAutoFarmNoQuest() end
+    if State.MobAuraEnabled then StartMobAura() end
+    if State.AutoBossFarmEnabled then StartAutoBossFarm() end
+    if State.AutoMasteryEnabled then StartAutoMastery() end
+    if State.AutoMaterialsEnabled then StartAutoMaterials() end
+    if State.AutoBonesEnabled then StartAutoBones() end
+    if State.AutoChestsEnabled then StartAutoChests() end
+    if State.AutoRaidEnabled then StartAutoRaid() end
+    if State.KillAuraEnabled then StartKillAura() end
+    if State.AimbotEnabled then StartAimbot() end
+    if State.FullbrightEnabled then StartFullbright() end
+    if State.RemoveFogEnabled then StartRemoveFog() end
+    if State.PlayerESPEnabled then StartPlayerESP() end
+    if State.ChamsEnabled then StartChams() end
+    if State.TracersEnabled then StartTracers() end
 end)
