@@ -25,6 +25,8 @@ local CONFIG = {
     PlaceId = 2753915549,
     ServerHopDelay = 2,
     FruitLostDelay = 3,
+    MaxFruitSize = 5,
+    MaxFruitParts = 15,
 }
 
 local FRUIT_CODES = {
@@ -37,7 +39,7 @@ local FRUIT_CODES = {
     ["Diamond Fruit"] = "Diamond-Diamond", ["Light Fruit"] = "Light-Light",
     ["Rubber Fruit"] = "Rubber-Rubber", ["Barrier Fruit"] = "Barrier-Barrier",
     ["Ghost Fruit"] = "Revive-Revive", ["Magma Fruit"] = "Magma-Magma",
-    ["Door Fruit"] = "Door-Door", ["Quake Fruit"] = "Quake-Quake",
+    ["Quake Fruit"] = "Quake-Quake",
     ["Buddha Fruit"] = "Buddha-Buddha", ["Love Fruit"] = "Love-Love",
     ["Creation Fruit"] = "Creation-Creation", ["Spider Fruit"] = "Spider-Spider",
     ["Sound Fruit"] = "Sound-Sound", ["Phoenix Fruit"] = "Bird-Bird: Phoenix",
@@ -68,7 +70,8 @@ local EXCLUDE = {
     "gacha","dealer","shop","stand","vendor","npc","pedestal","display",
     "clone","effect","particle","aura","trail","island","portal","door",
     "statue","sign","masterfruityors","mastery","fruityors","fruityor",
-    "fruitmachine","fruitvendor","fruitdealer","fruitstand",
+    "fruitmachine","fruitvendor","fruitdealer","fruitstand","platform",
+    "ground","floor","wall","building","tree","rock",
 }
 
 local MenuLocked = false
@@ -153,24 +156,27 @@ local function HasExcluded(str)
     return false
 end
 
-local function StripSuffix(name) return (name:gsub("%.%d+$", "")) end
+local function StripSuffix(name)
+    return (name:gsub("%.%d+$", ""))
+end
 
-local function IsFruitName(str)
-    if type(str) ~= "string" then return false end
+local function GetFruitBaseName(str)
     local cleanName = StripSuffix(str)
     local lower = cleanName:lower()
-    if lower:find("fruit", 1, true) then
-        if HasExcluded(str) then return false end
-        local c = lower:gsub("fruit",""):gsub("%s+","")
-        if c == "" or c:match("^%d+$") then return false end
-        return true
-    end
     for fname, _ in pairs(FRUIT_CODES) do
         local fl = fname:lower()
         local base = fl:gsub(" fruit", "")
-        if lower == fl or lower == base then return true end
+        if lower == fl or lower == base then
+            return base
+        end
     end
-    return false
+    return nil
+end
+
+local function IsFruitName(str)
+    if type(str) ~= "string" then return false end
+    if HasExcluded(str) then return false end
+    return GetFruitBaseName(str) ~= nil
 end
 
 local function IsNpc(inst)
@@ -182,10 +188,32 @@ end
 local function IsInsideCharacter(inst)
     local p = inst.Parent
     while p do
-        if p:IsA("Model") and p:FindFirstChildOfClass("Humanoid") then return true end
+        if p:IsA("Model") and p:FindFirstChildOfClass("Humanoid") then
+            return true
+        end
         p = p.Parent
     end
     return false
+end
+
+local function GetSize(adornee)
+    if adornee:IsA("BasePart") then
+        local s = adornee.Size
+        return math.max(s.X, s.Y, s.Z)
+    end
+    return nil
+end
+
+local function CountParts(inst)
+    if inst:IsA("BasePart") then return 1 end
+    local count = 0
+    for _, child in ipairs(inst:GetDescendants()) do
+        if child:IsA("BasePart") then
+            count = count + 1
+            if count > CONFIG.MaxFruitParts then return count end
+        end
+    end
+    return count
 end
 
 local function IsFruitRelated(inst)
@@ -193,7 +221,21 @@ local function IsFruitRelated(inst)
     if not (inst:IsA("Tool") or inst:IsA("Model")) then return false end
     if not IsFruitName(inst.Name) then return false end
     if IsInsideCharacter(inst) then return false end
-    if inst:IsA("Model") and not inst:FindFirstChildWhichIsA("BasePart", true) then return false end
+
+    local adornee = nil
+    if inst:IsA("Model") then
+        adornee = inst.PrimaryPart or inst:FindFirstChildWhichIsA("BasePart", true)
+    elseif inst:IsA("Tool") then
+        adornee = inst:FindFirstChild("Handle") or inst:FindFirstChildWhichIsA("BasePart", true)
+    end
+    if not adornee then return false end
+
+    local size = GetSize(adornee)
+    if size and size > CONFIG.MaxFruitSize then return false end
+
+    local parts = CountParts(inst)
+    if parts > CONFIG.MaxFruitParts then return false end
+
     return true
 end
 
@@ -308,10 +350,15 @@ local function FindFruitTool()
 end
 
 local function GetFruitCode(toolName)
-    local cleanName = StripSuffix(toolName)
-    if FRUIT_CODES[cleanName] then return FRUIT_CODES[cleanName] end
-    local base = cleanName:gsub(" Fruit", "")
-    if FRUIT_CODES[base .. " Fruit"] then return FRUIT_CODES[base .. " Fruit"] end
+    local base = GetFruitBaseName(toolName)
+    if not base then base = StripSuffix(toolName):gsub(" Fruit", "") end
+    for fname, code in pairs(FRUIT_CODES) do
+        local fl = fname:lower()
+        local fb = fl:gsub(" fruit", "")
+        if fl == toolName:lower() or fb == base then
+            return code
+        end
+    end
     return base .. "-" .. base
 end
 
@@ -327,6 +374,35 @@ local function TryStoreFruit()
         if ok then task.wait(0.3); if not tool.Parent then return true end end
     end
     return false
+end
+
+local function UnequipNonFruits()
+    local char = LocalPlayer.Character
+    if not char then return end
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return end
+    for _, child in ipairs(char:GetChildren()) do
+        if child:IsA("Tool") and not IsFruitName(child.Name) then
+            pcall(function() child.Parent = backpack end)
+        end
+    end
+end
+
+local function StartAutoStore()
+    if AutoStoreThread then return end
+    AutoStoreThread = task.spawn(function()
+        while AutoStoreEnabled do
+            task.wait(0.5)
+            local tool = FindFruitTool()
+            if tool then TryStoreFruit() end
+            UnequipNonFruits()
+        end
+    end)
+end
+
+local function StopAutoStore()
+    AutoStoreEnabled = false
+    if AutoStoreThread then task.cancel(AutoStoreThread); AutoStoreThread = nil end
 end
 
 local function StartFlyToFruit()
@@ -381,8 +457,7 @@ local function StartAutoFarmFruit()
             for inst, data in pairs(Tracked) do
                 if not inst.Parent or not data.Adornee or not data.Adornee.Parent then RemoveFruitTracked(inst) end
             end
-            local target = GetNearestFruit()
-            if target then
+            if GetNearestFruit() then
                 emptyTimer = 0
                 if not FlyEnabled then FlyEnabled = true; StartFlyToFruit() end
                 task.wait(0.3)
@@ -445,8 +520,7 @@ local function StartAimbot()
         if not target or not target.Character then return end
         local targetHead = target.Character:FindFirstChild("Head")
         if not targetHead then return end
-        local camera = Workspace.CurrentCamera
-        camera.CFrame = CFrame.new(camera.CFrame.Position, targetHead.Position)
+        Workspace.CurrentCamera.CFrame = CFrame.new(Workspace.CurrentCamera.CFrame.Position, targetHead.Position)
         AimbotTarget = target
     end)
     task.spawn(function()
@@ -550,9 +624,9 @@ local function StartAutoMastery()
             if myPos then
                 local nearestNpc, nearestDist = nil, math.huge
                 for _, inst in ipairs(Workspace:GetDescendants()) do
-                    if inst:IsA("Model") and inst:FindFirstChild("Humanoid") then
+                    if inst:IsA("Model") and inst:FindFirstChild("Humanoid") and not inst:FindFirstChildOfClass("Accessory") then
                         local hrp = inst:FindFirstChild("HumanoidRootPart")
-                        if hrp and not inst:FindFirstChildOfClass("Accessory") then
+                        if hrp then
                             local dist = (hrp.Position - myPos).Magnitude
                             if dist < nearestDist then nearestDist = dist; nearestNpc = hrp end
                         end
@@ -594,9 +668,7 @@ local function StartAutoQuest()
         local commF = GetCommF()
         while AutoQuestEnabled do
             task.wait(2)
-            if commF then
-                pcall(function() commF:InvokeServer("StartQuest") end)
-            end
+            if commF then pcall(function() commF:InvokeServer("StartQuest") end) end
         end
     end)
 end
@@ -747,9 +819,7 @@ local function StartAutoMaterials()
                                 EnableNoclip()
                                 local char = LocalPlayer.Character
                                 local charHrp = char and char:FindFirstChild("HumanoidRootPart")
-                                if charHrp then
-                                    charHrp.CFrame = CFrame.new(hrp.Position + Vector3.new(0, 5, 0))
-                                end
+                                if charHrp then charHrp.CFrame = CFrame.new(hrp.Position + Vector3.new(0, 5, 0)) end
                             end
                         end
                     end
@@ -781,9 +851,7 @@ local function StartAutoBones()
                                 EnableNoclip()
                                 local char = LocalPlayer.Character
                                 local charHrp = char and char:FindFirstChild("HumanoidRootPart")
-                                if charHrp then
-                                    charHrp.CFrame = CFrame.new(hrp.Position + Vector3.new(0, 5, 0))
-                                end
+                                if charHrp then charHrp.CFrame = CFrame.new(hrp.Position + Vector3.new(0, 5, 0)) end
                             end
                         end
                     end
@@ -812,9 +880,7 @@ local function StartAutoChests()
                         if part then
                             local char = LocalPlayer.Character
                             local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                            if hrp then
-                                hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
-                            end
+                            if hrp then hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0)) end
                         end
                     end
                 end
@@ -834,11 +900,7 @@ local function StartAutoRaid()
         local commF = GetCommF()
         while AutoRaidEnabled do
             task.wait(2)
-            if commF then
-                pcall(function()
-                    commF:InvokeServer("RequestRaid")
-                end)
-            end
+            if commF then pcall(function() commF:InvokeServer("RequestRaid") end) end
         end
     end)
 end
@@ -900,8 +962,7 @@ local function CreatePlayerESP(player)
     local function setupCharacter(char)
         if char:FindFirstChild("WindHaserESP") then return end
         local head = char:WaitForChild("Head", 5)
-        local hrp = char:WaitForChild("HumanoidRootPart", 5)
-        if not head or not hrp then return end
+        if not head then return end
         local bb = Instance.new("BillboardGui")
         bb.Name = "WindHaserESP"
         bb.Adornee = head
@@ -955,15 +1016,10 @@ local function StartPlayerESP()
     Players.PlayerAdded:Connect(function(player)
         if PlayerESPEnabled then CreatePlayerESP(player) end
     end)
-    Players.PlayerRemoving:Connect(function(player)
-        RemovePlayerESP(player)
-    end)
 end
 
 local function StopPlayerESP()
-    for player, _ in pairs(PlayerESPTable) do
-        RemovePlayerESP(player)
-    end
+    for player, _ in pairs(PlayerESPTable) do RemovePlayerESP(player) end
 end
 
 local ChamsTable = {}
@@ -996,7 +1052,7 @@ local function StartChams()
 end
 
 local function StopChams()
-    for inst, hl in pairs(ChamsTable) do
+    for _, hl in pairs(ChamsTable) do
         if hl then hl:Destroy() end
     end
     ChamsTable = {}
@@ -1036,7 +1092,7 @@ local function StartTracers()
 end
 
 local function StopTracers()
-    for adornee, line in pairs(TracersTable) do
+    for _, line in pairs(TracersTable) do
         if line then line:Destroy() end
     end
     TracersTable = {}
@@ -1086,7 +1142,6 @@ ToggleBtn.Name = "Toggle"
 ToggleBtn.Size = UDim2.new(0, 56, 0, 56)
 ToggleBtn.Position = UDim2.new(0, 20, 0, 60)
 ToggleBtn.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
-ToggleBtn.BackgroundTransparency = 0
 ToggleBtn.BorderSizePixel = 0
 ToggleBtn.Text = ""
 ToggleBtn.AutoButtonColor = false
@@ -1120,7 +1175,6 @@ LogoText.BackgroundTransparency = 1
 LogoText.Font = Enum.Font.GothamBlack
 LogoText.TextSize = 28
 LogoText.TextColor3 = Color3.fromRGB(255, 255, 255)
-LogoText.TextTransparency = 0
 LogoText.Text = "W"
 LogoText.ZIndex = 12
 LogoText.Parent = ToggleBtn
@@ -1530,8 +1584,8 @@ local function CreateKeybindButton(parent, text, defaultKey, callback)
         Btn.Text = text .. ": нажми клавишу..."
         Btn.TextColor3 = Color3.fromRGB(255, 200, 100)
     end)
-    UserInputService.InputBegan:Connect(function(input, gameProcessed)
-        if gameProcessed then return end
+    UserInputService.InputBegan:Connect(function(input, gp)
+        if gp then return end
         if not isListening then return end
         if input.UserInputType == Enum.UserInputType.Keyboard then
             currentKey = input.KeyCode
@@ -1617,7 +1671,7 @@ local function CreateDropdown(parent, text, options, defaultIndex, callback)
     local isOpen = false
     local optionButtons = {}
 
-    for i, option in ipairs(options) do
+    for _, option in ipairs(options) do
         local OptionBtn = Instance.new("TextButton")
         OptionBtn.Size = UDim2.new(1, 0, 0, 24)
         OptionBtn.BackgroundColor3 = CONFIG.ButtonOff
@@ -1649,8 +1703,7 @@ local function CreateDropdown(parent, text, options, defaultIndex, callback)
         isOpen = not isOpen
         ListFrame.Visible = isOpen
         if isOpen then
-            local height = math.min(#options * 26, 200)
-            ListFrame.Size = UDim2.new(1, 0, 0, height)
+            ListFrame.Size = UDim2.new(1, 0, 0, math.min(#options * 26, 200))
         else
             ListFrame.Size = UDim2.new(1, 0, 0, 0)
         end
@@ -1664,7 +1717,7 @@ CreateSection(MainPage, "Auto Farm Level")
 CreateToggle(MainPage, "Auto Farm Level", false, function(state) AutoFarmLevelEnabled = state; if state then StartAutoFarmLevel() else StopAutoFarmLevel() end end)
 CreateToggle(MainPage, "Auto Quest", false, function(state) AutoQuestEnabled = state; if state then StartAutoQuest() else StopAutoQuest() end end)
 CreateToggle(MainPage, "Auto Farm No Quest", false, function(state) AutoFarmNoQuestEnabled = state; if state then StartAutoFarmNoQuest() else StopAutoFarmNoQuest() end end)
-CreateToggle(MainPage, "Mob Aura (Farm Near)", false, function(state) MobAuraEnabled = state; if state then StartMobAura() else StopMobAura() end end)
+CreateToggle(MainPage, "Mob Aura", false, function(state) MobAuraEnabled = state; if state then StartMobAura() else StopMobAura() end end)
 
 CreateSection(MainPage, "Boss Farm")
 CreateToggle(MainPage, "Auto Farm Boss", false, function(state) AutoBossFarmEnabled = state; if state then StartAutoBossFarm() else StopAutoBossFarm() end end)
@@ -1732,37 +1785,11 @@ Tabs["Main"].BackgroundTransparency = 0
 Pages["Main"].Visible = true
 PageTitle.Text = "Main"
 
-local function StartAutoStore()
-    if AutoStoreThread then return end
-    AutoStoreThread = task.spawn(function()
-        while AutoStoreEnabled do
-            task.wait(0.5)
-            local tool = FindFruitTool()
-            if tool then TryStoreFruit() end
-            local char = LocalPlayer.Character
-            local backpack = LocalPlayer:FindFirstChild("Backpack")
-            if char and backpack then
-                for _, child in ipairs(char:GetChildren()) do
-                    if child:IsA("Tool") and not IsFruitName(child.Name) then
-                        pcall(function() child.Parent = backpack end)
-                    end
-                end
-            end
-        end
-    end)
-end
-
-local function StopAutoStore()
-    AutoStoreEnabled = false
-    if AutoStoreThread then task.cancel(AutoStoreThread); AutoStoreThread = nil end
-end
-
 local function UpdateScale()
     local vp = Workspace.CurrentCamera.ViewportSize
     local fw = (vp.X * 0.9) / 720
     local fh = (vp.Y * 0.85) / 420
-    local ms = math.clamp(math.min(fw, fh), 0.4, 1)
-    MenuScale.Scale = ms
+    MenuScale.Scale = math.clamp(math.min(fw, fh), 0.4, 1)
     BtnScale.Scale = math.clamp(vp.X / 1920, 0.75, 1)
 end
 UpdateScale()
