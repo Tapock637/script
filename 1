@@ -589,10 +589,7 @@ local function StartAutoFarmFruit()
     return true
 end
 
-local AimbotTarget = nil
-local SkillKeys = { "Z", "X", "C", "V", "F" }
-
-local function GetClosestTarget()
+local function GetClosestPlayer()
     local myPos = GetMyPosition()
     if not myPos then return nil end
     local closest, closestDist = nil, math.huge
@@ -601,7 +598,10 @@ local function GetClosestTarget()
             local hrp = player.Character:FindFirstChild("HumanoidRootPart")
             if hrp and player.Team ~= LocalPlayer.Team then
                 local dist = (hrp.Position - myPos).Magnitude
-                if dist < closestDist then closestDist = dist; closest = player end
+                if dist < closestDist and dist <= 50 then
+                    closestDist = dist
+                    closest = player
+                end
             end
         end
     end
@@ -609,35 +609,21 @@ local function GetClosestTarget()
 end
 
 local function StartAimbot()
-    if AimbotConn then AimbotConn:Disconnect(); AimbotConn = nil end
+    if AimbotConn then AimbotConn:Disconnect() end
     AimbotConn = RunService.RenderStepped:Connect(function()
         if not State.AimbotEnabled then return end
-        local target = GetClosestTarget()
+        local target = GetClosestPlayer()
         if not target or not target.Character then return end
         local targetHead = target.Character:FindFirstChild("Head")
         if not targetHead then return end
-        Workspace.CurrentCamera.CFrame = CFrame.new(Workspace.CurrentCamera.CFrame.Position, targetHead.Position)
-        AimbotTarget = target
-    end)
-    task.spawn(function()
-        while State.AimbotEnabled do
-            task.wait(0.1)
-            if AimbotTarget and AimbotTarget.Character then
-                for _, key in ipairs(SkillKeys) do
-                    pcall(function()
-                        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
-                        task.wait(0.05)
-                        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
-                    end)
-                end
-            end
-        end
+        local mouse = LocalPlayer:GetMouse()
+        mouse.Hit = CFrame.new(targetHead.Position)
     end)
 end
 
 local function StopAimbot()
-    if AimbotConn then AimbotConn:Disconnect(); AimbotConn = nil end
-    AimbotTarget = nil
+    if AimbotConn then AimbotConn:Disconnect() end
+    AimbotConn = nil
 end
 
 local function FindBoss()
@@ -1061,7 +1047,10 @@ local function StartRemoveFog()
         while State.RemoveFogEnabled do
             pcall(function()
                 local atmo = Lighting:FindFirstChildOfClass("Atmosphere")
-                if atmo then atmo.Density = 0 end
+                if atmo then
+                    atmo.Density = 0
+                    atmo.Offset = 1
+                end
                 Lighting.FogEnd = 1e10
                 Lighting.FogStart = 0
                 Lighting.FogColor = Color3.new(0, 0, 0)
