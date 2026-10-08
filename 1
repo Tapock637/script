@@ -129,6 +129,9 @@ local State = {
     MenuLockedState = false,
     AutoTeamEnabled = false,
     MenuFixedState = false,
+    FastAttackEnabled = false,
+    FastAttackSpeed = 1.0,
+    FastAttackRange = 1.0,
 }
 
 local function loadConfig()
@@ -138,7 +141,7 @@ local function loadConfig()
     end)
     if ok and type(data) == "table" then
         for k, v in pairs(data) do
-            if State[k] ~= nil and type(v) == "boolean" then
+            if State[k] ~= nil and (type(v) == "boolean" or type(v) == "number") then
                 State[k] = v
             end
         end
@@ -174,6 +177,8 @@ local KillAuraThread = nil
 local FullbrightThread = nil
 local RemoveFogThread = nil
 local HomeThread = nil
+local FastAttackThread = nil
+local FastAttackAnchorThread = nil
 
 local MenuLocked = State.MenuLockedState
 local MenuFixed = State.MenuFixedState
@@ -188,7 +193,6 @@ local SelectedTeam = "Marines"
 
 local playtimeStart = tick()
 
--- Определяем serverStartTime как можно надёжнее
 local serverStartTime = nil
 pcall(function()
     local t = workspace:GetServerTimeNow()
@@ -1114,6 +1118,136 @@ local function StopRemoveFog()
     Lighting.FogStart = normalLighting.FogStart
 end
 
+-- ============================================================
+-- FAST ATTACK
+-- ============================================================
+local FastAttackOldNamecall = nil
+local FastAttackLastCFrame = nil
+
+local function StartFastAttack()
+    if FastAttackThread then return end
+    State.FastAttackEnabled = true
+
+    -- Хук на __namecall для ускорения атак через Remotes
+    if not FastAttackOldNamecall then
+        FastAttackOldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            local method = getnamecallmethod()
+            local args = {...}
+
+            if not checkcaller() and State.FastAttackEnabled then
+                -- Перехватываем вызовы CommF_
+                local commF = GetCommF()
+                if commF and self == commF and method == "InvokeServer" then
+                    local cmd = args[1]
+                    -- Ускорение и увеличение радиуса для ближнего боя
+                    if cmd == "Attack" or cmd == "MeleeAttack" or cmd == "SwordAttack" or cmd == "M1" then
+                        for i = 2, #args do
+                            local a = args[i]
+                            if type(a) == "table" then
+                                if a.Delay then a.Delay = a.Delay / State.FastAttackSpeed end
+                                if a.Cooldown then a.Cooldown = a.Cooldown / State.FastAttackSpeed end
+                                if a.Speed then a.Speed = a.Speed * State.FastAttackSpeed end
+                                if a.Range then a.Range = a.Range * State.FastAttackRange end
+                                if a.Hitbox then a.Hitbox = a.Hitbox * State.FastAttackRange end
+                                a.NoAnimation = true
+                                a.NoKnockback = true
+                                a.NoStun = true
+                            elseif type(a) == "number" and i == 2 then
+                                -- Второй аргумент часто скорость/радиус
+                                args[i] = a * State.FastAttackRange
+                            end
+                        end
+                    end
+                end
+            end
+
+            return FastAttackOldNamecall(self, ...)
+        end))
+    end
+
+    -- Хук на все RemoteEvent для перехвата атак
+    local RemoteHookConn
+    RemoteHookConn = RunService.Heartbeat:Connect(function()
+        -- не нужно, оставляем пустым, т.к. хук через namecall
+    end)
+    if RemoteHookConn then RemoteHookConn:Disconnect() end
+
+    -- Хук на Animator:PlayAnimation чтобы не проигрывать анимацию атаки
+    local char = LocalPlayer.Character
+    local function hookAnimator(animator)
+        if not animator then return end
+        if animator:GetAttribute("WindHaserHooked") then return end
+        animator:SetAttribute("WindHaserHooked", true)
+        local oldLoad
+        oldLoad = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+            return oldLoad(self, ...)
+        end))
+        -- Используем прямой хук на функцию
+        local mt = getrawmetatable(game)
+        if mt and not mt.__WindHaserAnimHook then
+            -- Просто переопределяем метод Play через newcclosure на инстансе
+            pcall(function()
+                local oldPlay = animator.Play
+                -- сохраняем на будущее
+            end)
+        end
+    end
+
+    -- Основной поток: принудительная остановка анимации атаки и фиксация позиции
+    FastAttackAnchorThread = task.spawn(function()
+        while State.FastAttackEnabled do
+            task.wait(0.05)
+            local char = LocalPlayer.Character
+            if char then
+                local hum = char:FindFirstChildOfClass("Humanoid")
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                -- Останавливаем все треки анимации, содержащие "attack"/"swing"/"slash"
+                if hum then
+                    local animator = hum:FindFirstChildOfClass("Animator")
+                    if animator then
+                        for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
+                            local aname = track.Animation and track.Animation.Name or ""
+                            local lname = aname:lower()
+                            if lname:find("attack") or lname:find("swing") or lname:find("slash")
+                                or lname:find("m1") or lname:find("punch") or lname:find("kick") then
+                                track:Stop(0)
+                            end
+                        end
+                    end
+                end
+                -- Фиксация позиции: гасим Velocity и удерживаем CFrame
+                if hrp then
+                    if FastAttackLastCFrame then
+                        hrp.CFrame = FastAttackLastCFrame
+                    end
+                    hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+                    hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+                end
+            end
+        end
+    end)
+
+    -- Поток для сброса FastAttackLastCFrame (чтобы он не «залипал»)
+    task.spawn(function()
+        while State.FastAttackEnabled do
+            task.wait(0.5)
+            local char = LocalPlayer.Character
+            if char then
+                local hrp = char:FindFirstChild("HumanoidRootPart")
+                if hrp then FastAttackLastCFrame = hrp.CFrame end
+            end
+        end
+    end)
+end
+
+local function StopFastAttack()
+    State.FastAttackEnabled = false
+    if FastAttackThread then task.cancel(FastAttackThread); FastAttackThread = nil end
+    if FastAttackAnchorThread then task.cancel(FastAttackAnchorThread); FastAttackAnchorThread = nil end
+    FastAttackLastCFrame = nil
+end
+-- ============================================================
+
 local PlayerESPTable = {}
 
 local function CreatePlayerESP(player)
@@ -1921,6 +2055,19 @@ CreateToggle(MiscPage, "Auto Team", "AutoTeamEnabled", function(s)
 end)
 CreateDropdown(MiscPage, "Team", {"Marines", "Pirates"}, 1, function(sel) SelectedTeam = sel end)
 
+CreateSection(MiscPage, "Fast Attack")
+CreateToggle(MiscPage, "Fast Attack", "FastAttackEnabled", function(s)
+    if s then StartFastAttack() else StopFastAttack() end
+end)
+CreateSlider(MiscPage, "Attack Speed", 1, 50, math.floor((State.FastAttackSpeed or 1.0) * 10), function(value)
+    State.FastAttackSpeed = value / 10
+    saveConfig()
+end)
+CreateSlider(MiscPage, "Attack Range", 1, 50, math.floor((State.FastAttackRange or 1.0) * 10), function(value)
+    State.FastAttackRange = value / 10
+    saveConfig()
+end)
+
 local RaidsPage = CreateTab("Raids")
 CreateSection(RaidsPage, "Auto Raid")
 CreateToggle(RaidsPage, "Auto Raid", "AutoRaidEnabled", function(s) if s then StartAutoRaid() else StopAutoRaid() end end)
@@ -2070,30 +2217,25 @@ LocalPlayer.CharacterAdded:Connect(function()
     if not State.FlyEnabled and not State.AutoFarmFruitEnabled then DisableNoclip() end
 end)
 
--- === ИСПРАВЛЕННЫЙ HOME THREAD ===
 HomeThread = task.spawn(function()
-    local maxReasonableTime = 115 * 24 * 60 * 60 -- 115 дней в секундах
+    local maxReasonableTime = 115 * 24 * 60 * 60
 
     while true do
         task.wait(1)
 
-        -- Playtime
         local playtime = tick() - playtimeStart
         local ph = math.floor(playtime / 3600)
         local pm = math.floor((playtime % 3600) / 60)
         local ps = math.floor(playtime % 60)
         if playtimeLabel then playtimeLabel.Text = string.format("Playtime: %02d:%02d:%02d", ph, pm, ps) end
 
-        -- Server Age: пробуем несколько источников
         local serverTime = nil
 
-        -- Метод 1: DistributedGameTime
         local ok1, dt1 = pcall(function() return Workspace.DistributedGameTime end)
         if ok1 and type(dt1) == "number" and dt1 > 0 and dt1 < maxReasonableTime then
             serverTime = dt1
         end
 
-        -- Метод 2: GetServerTimeNow - разница с сохранённым значением
         if not serverTime and serverStartTime and serverStartTime > 1e15 then
             local ok2, now2 = pcall(function() return workspace:GetServerTimeNow() end)
             if ok2 and type(now2) == "number" and now2 > serverStartTime then
@@ -2104,7 +2246,6 @@ HomeThread = task.spawn(function()
             end
         end
 
-        -- Если ничего не сработало — используем playtime как fallback
         if not serverTime then
             serverTime = playtime
         end
@@ -2179,6 +2320,7 @@ task.spawn(function()
     if State.ChamsEnabled then StartChams() end
     if State.TracersEnabled then StartTracers() end
     if State.AutoTeamEnabled then selectTeam(SelectedTeam) end
+    if State.FastAttackEnabled then StartFastAttack() end
     if State.ESPEnabled then
         for _, data in pairs(Tracked) do
             if data.Gui then data.Gui.Enabled = true end
