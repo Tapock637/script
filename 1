@@ -188,16 +188,34 @@ local SelectedTeam = "Marines"
 
 local playtimeStart = tick()
 
--- === СТАРТОВЫЙ АПТАЙМ СЕРВЕРА (читаем один раз) ===
-local InitialServerUptime = 0
-local InitialTickAt = tick()
-pcall(function()
-    local dgt = Workspace.DistributedGameTime
-    if type(dgt) == "number" and dgt > 0 and dgt < 365 * 24 * 60 * 60 then
-        InitialServerUptime = dgt
+-- ============================================================
+-- ТРЕКИНГ АПТАЙМА СЕРВЕРА (надёжный, с fallback)
+-- ============================================================
+local ServerRefValue = 0
+local ServerRefTick = tick()
+local ServerRefValid = false
+
+-- Фоновый поток: постоянно отслеживаем максимальное DistributedGameTime
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        local ok, dgt = pcall(function() return Workspace.DistributedGameTime end)
+        if ok and type(dgt) == "number" and dgt > ServerRefValue and dgt < 365 * 24 * 60 * 60 then
+            ServerRefValue = dgt
+            ServerRefTick = tick()
+            ServerRefValid = true
+        end
     end
 end)
--- ================================================
+
+local function GetServerAge()
+    if not ServerRefValid then
+        -- Если DistributedGameTime вообще недоступен — используем playtime
+        return tick() - playtimeStart
+    end
+    return ServerRefValue + (tick() - ServerRefTick)
+end
+-- ============================================================
 
 local NOCLIP_GROUP = "WindHaserNoclip"
 pcall(function() PhysicsService:RegisterCollisionGroup(NOCLIP_GROUP) end)
@@ -2059,28 +2077,31 @@ LocalPlayer.CharacterAdded:Connect(function()
     if not State.FlyEnabled and not State.AutoFarmFruitEnabled then DisableNoclip() end
 end)
 
--- === ИСПРАВЛЕННЫЙ HOME THREAD (точный Server Age) ===
+-- === HOME THREAD с надёжным Server Age ===
 HomeThread = task.spawn(function()
     while true do
         task.wait(1)
 
-        -- Playtime (время работы скрипта)
+        -- Playtime
         local playtime = tick() - playtimeStart
         local ph = math.floor(playtime / 3600)
         local pm = math.floor((playtime % 3600) / 60)
         local ps = math.floor(playtime % 60)
         if playtimeLabel then playtimeLabel.Text = string.format("Playtime: %02d:%02d:%02d", ph, pm, ps) end
 
-        -- Server Age = стартовый аптайм + время с момента запуска скрипта
-        local serverTime = InitialServerUptime + (tick() - InitialTickAt)
+        -- Server Age = максимальный DistributedGameTime + прошедшее время
+        local serverTime = GetServerAge()
         if type(serverTime) ~= "number" or serverTime < 0 then serverTime = 0 end
 
         local sh = math.floor(serverTime / 3600)
         local sm = math.floor((serverTime % 3600) / 60)
         local ss = math.floor(serverTime % 60)
-        if serverTimeLabel then serverTimeLabel.Text = string.format("Server Age: %02d:%02d:%02d", sh, sm, ss) end
+        if serverTimeLabel then
+            local suffix = ServerRefValid and "" or " (fallback)"
+            serverTimeLabel.Text = string.format("Server Age: %02d:%02d:%02d%s", sh, sm, ss, suffix)
+        end
 
-        -- Full Moon (цикл 8 часов 20 минут)
+        -- Full Moon (цикл 8 * 20 минут)
         local fullMoonCycle = 8 * 20 * 60
         local timeUntil = fullMoonCycle - (serverTime % fullMoonCycle)
         if timeUntil > fullMoonCycle - 55 * 60 then timeUntil = timeUntil - fullMoonCycle end
@@ -2091,7 +2112,7 @@ HomeThread = task.spawn(function()
             fullMoonLabel.Text = string.format("Full Moon: %02d:%02d:%02d", fh, fm, fs)
         end
 
-        -- Factory (цикл 90 минут)
+        -- Factory (90 минут)
         local factoryCycle = 90 * 60
         local timeUntilFactory = factoryCycle - (serverTime % factoryCycle)
         if factoryLabel then
@@ -2101,7 +2122,7 @@ HomeThread = task.spawn(function()
             factoryLabel.Text = string.format("Factory: %02d:%02d:%02d", fah, fam, fas)
         end
 
-        -- Pirate Attack (цикл 75 минут)
+        -- Pirate Attack (75 минут)
         local pirateCycle = 75 * 60
         local timeUntilPirate = pirateCycle - (serverTime % pirateCycle)
         if pirateLabel then
