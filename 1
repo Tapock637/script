@@ -188,27 +188,16 @@ local SelectedTeam = "Marines"
 
 local playtimeStart = tick()
 
--- Определяем serverStartTime как можно надёжнее
-local serverStartTime = nil
+-- === СТАРТОВЫЙ АПТАЙМ СЕРВЕРА (читаем один раз) ===
+local InitialServerUptime = 0
+local InitialTickAt = tick()
 pcall(function()
-    local t = workspace:GetServerTimeNow()
-    if type(t) == "number" and t > 0 then
-        serverStartTime = t
+    local dgt = Workspace.DistributedGameTime
+    if type(dgt) == "number" and dgt > 0 and dgt < 365 * 24 * 60 * 60 then
+        InitialServerUptime = dgt
     end
 end)
-
-if not serverStartTime then
-    pcall(function()
-        local t = Workspace.DistributedGameTime
-        if type(t) == "number" and t > 0 then
-            serverStartTime = t
-        end
-    end)
-end
-
-if not serverStartTime then
-    serverStartTime = tick()
-end
+-- ================================================
 
 local NOCLIP_GROUP = "WindHaserNoclip"
 pcall(function() PhysicsService:RegisterCollisionGroup(NOCLIP_GROUP) end)
@@ -2070,50 +2059,28 @@ LocalPlayer.CharacterAdded:Connect(function()
     if not State.FlyEnabled and not State.AutoFarmFruitEnabled then DisableNoclip() end
 end)
 
--- === ИСПРАВЛЕННЫЙ HOME THREAD ===
+-- === ИСПРАВЛЕННЫЙ HOME THREAD (точный Server Age) ===
 HomeThread = task.spawn(function()
-    local maxReasonableTime = 115 * 24 * 60 * 60 -- 115 дней в секундах
-
     while true do
         task.wait(1)
 
-        -- Playtime
+        -- Playtime (время работы скрипта)
         local playtime = tick() - playtimeStart
         local ph = math.floor(playtime / 3600)
         local pm = math.floor((playtime % 3600) / 60)
         local ps = math.floor(playtime % 60)
         if playtimeLabel then playtimeLabel.Text = string.format("Playtime: %02d:%02d:%02d", ph, pm, ps) end
 
-        -- Server Age: пробуем несколько источников
-        local serverTime = nil
-
-        -- Метод 1: DistributedGameTime
-        local ok1, dt1 = pcall(function() return Workspace.DistributedGameTime end)
-        if ok1 and type(dt1) == "number" and dt1 > 0 and dt1 < maxReasonableTime then
-            serverTime = dt1
-        end
-
-        -- Метод 2: GetServerTimeNow - разница с сохранённым значением
-        if not serverTime and serverStartTime and serverStartTime > 1e15 then
-            local ok2, now2 = pcall(function() return workspace:GetServerTimeNow() end)
-            if ok2 and type(now2) == "number" and now2 > serverStartTime then
-                local diff = (now2 - serverStartTime) / 1000000
-                if diff > 0 and diff < maxReasonableTime then
-                    serverTime = diff
-                end
-            end
-        end
-
-        -- Если ничего не сработало — используем playtime как fallback
-        if not serverTime then
-            serverTime = playtime
-        end
+        -- Server Age = стартовый аптайм + время с момента запуска скрипта
+        local serverTime = InitialServerUptime + (tick() - InitialTickAt)
+        if type(serverTime) ~= "number" or serverTime < 0 then serverTime = 0 end
 
         local sh = math.floor(serverTime / 3600)
         local sm = math.floor((serverTime % 3600) / 60)
         local ss = math.floor(serverTime % 60)
         if serverTimeLabel then serverTimeLabel.Text = string.format("Server Age: %02d:%02d:%02d", sh, sm, ss) end
 
+        -- Full Moon (цикл 8 часов 20 минут)
         local fullMoonCycle = 8 * 20 * 60
         local timeUntil = fullMoonCycle - (serverTime % fullMoonCycle)
         if timeUntil > fullMoonCycle - 55 * 60 then timeUntil = timeUntil - fullMoonCycle end
@@ -2124,6 +2091,7 @@ HomeThread = task.spawn(function()
             fullMoonLabel.Text = string.format("Full Moon: %02d:%02d:%02d", fh, fm, fs)
         end
 
+        -- Factory (цикл 90 минут)
         local factoryCycle = 90 * 60
         local timeUntilFactory = factoryCycle - (serverTime % factoryCycle)
         if factoryLabel then
@@ -2133,6 +2101,7 @@ HomeThread = task.spawn(function()
             factoryLabel.Text = string.format("Factory: %02d:%02d:%02d", fah, fam, fas)
         end
 
+        -- Pirate Attack (цикл 75 минут)
         local pirateCycle = 75 * 60
         local timeUntilPirate = pirateCycle - (serverTime % pirateCycle)
         if pirateLabel then
@@ -2142,6 +2111,7 @@ HomeThread = task.spawn(function()
             pirateLabel.Text = string.format("Pirate Attack: %02d:%02d:%02d", pah, pam, pas)
         end
 
+        -- Fruit Spawn (45 мин выходные, 60 мин будни)
         local isWeekend = false
         local day = os.date("*t").wday
         if day == 1 or day == 7 then isWeekend = true end
