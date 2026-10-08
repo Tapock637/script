@@ -177,8 +177,13 @@ local KillAuraThread = nil
 local FullbrightThread = nil
 local RemoveFogThread = nil
 local HomeThread = nil
-local FastAttackThread = nil
+
+-- Fast Attack variables
 local FastAttackAnchorThread = nil
+local FastAttackAnchorConn = nil
+local FastAttackLastCFrame = nil
+local FastAttackHookInstalled = false
+local FastAttackOriginalNamecall = nil
 
 local MenuLocked = State.MenuLockedState
 local MenuFixed = State.MenuFixedState
@@ -1121,79 +1126,50 @@ end
 -- ============================================================
 -- FAST ATTACK
 -- ============================================================
-local FastAttackOldNamecall = nil
-local FastAttackLastCFrame = nil
-
 local function StartFastAttack()
-    if FastAttackThread then return end
+    if State.FastAttackEnabled and FastAttackAnchorThread then return end
     State.FastAttackEnabled = true
 
-    -- Хук на __namecall для ускорения атак через Remotes
-    if not FastAttackOldNamecall then
-        FastAttackOldNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-            local method = getnamecallmethod()
-            local args = {...}
-
-            if not checkcaller() and State.FastAttackEnabled then
-                -- Перехватываем вызовы CommF_
-                local commF = GetCommF()
-                if commF and self == commF and method == "InvokeServer" then
-                    local cmd = args[1]
-                    -- Ускорение и увеличение радиуса для ближнего боя
-                    if cmd == "Attack" or cmd == "MeleeAttack" or cmd == "SwordAttack" or cmd == "M1" then
-                        for i = 2, #args do
-                            local a = args[i]
-                            if type(a) == "table" then
-                                if a.Delay then a.Delay = a.Delay / State.FastAttackSpeed end
-                                if a.Cooldown then a.Cooldown = a.Cooldown / State.FastAttackSpeed end
-                                if a.Speed then a.Speed = a.Speed * State.FastAttackSpeed end
-                                if a.Range then a.Range = a.Range * State.FastAttackRange end
-                                if a.Hitbox then a.Hitbox = a.Hitbox * State.FastAttackRange end
-                                a.NoAnimation = true
-                                a.NoKnockback = true
-                                a.NoStun = true
-                            elseif type(a) == "number" and i == 2 then
-                                -- Второй аргумент часто скорость/радиус
-                                args[i] = a * State.FastAttackRange
+    -- Устанавливаем хук на __namecall (только один раз за сессию)
+    if not FastAttackHookInstalled then
+        local ok = pcall(function()
+            if not (hookmetamethod and newcclosure and getnamecallmethod) then
+                error("hook functions unavailable")
+            end
+            FastAttackOriginalNamecall = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
+                local method = getnamecallmethod()
+                if not checkcaller() and State.FastAttackEnabled and method == "InvokeServer" then
+                    local commF = GetCommF()
+                    if commF and self == commF then
+                        local args = {...}
+                        local cmd = args[1]
+                        if cmd == "Attack" or cmd == "MeleeAttack" or cmd == "SwordAttack" or cmd == "M1" then
+                            for i = 2, #args do
+                                local a = args[i]
+                                if type(a) == "table" then
+                                    if type(a.Delay) == "number" then a.Delay = a.Delay / State.FastAttackSpeed end
+                                    if type(a.Cooldown) == "number" then a.Cooldown = a.Cooldown / State.FastAttackSpeed end
+                                    if type(a.Speed) == "number" then a.Speed = a.Speed * State.FastAttackSpeed end
+                                    if type(a.Range) == "number" then a.Range = a.Range * State.FastAttackRange end
+                                    if type(a.Hitbox) == "number" then a.Hitbox = a.Hitbox * State.FastAttackRange end
+                                    a.NoAnimation = true
+                                    a.NoKnockback = true
+                                end
                             end
                         end
                     end
                 end
-            end
-
-            return FastAttackOldNamecall(self, ...)
-        end))
-    end
-
-    -- Хук на все RemoteEvent для перехвата атак
-    local RemoteHookConn
-    RemoteHookConn = RunService.Heartbeat:Connect(function()
-        -- не нужно, оставляем пустым, т.к. хук через namecall
-    end)
-    if RemoteHookConn then RemoteHookConn:Disconnect() end
-
-    -- Хук на Animator:PlayAnimation чтобы не проигрывать анимацию атаки
-    local char = LocalPlayer.Character
-    local function hookAnimator(animator)
-        if not animator then return end
-        if animator:GetAttribute("WindHaserHooked") then return end
-        animator:SetAttribute("WindHaserHooked", true)
-        local oldLoad
-        oldLoad = hookmetamethod(game, "__namecall", newcclosure(function(self, ...)
-            return oldLoad(self, ...)
-        end))
-        -- Используем прямой хук на функцию
-        local mt = getrawmetatable(game)
-        if mt and not mt.__WindHaserAnimHook then
-            -- Просто переопределяем метод Play через newcclosure на инстансе
-            pcall(function()
-                local oldPlay = animator.Play
-                -- сохраняем на будущее
-            end)
+                return FastAttackOriginalNamecall(self, ...)
+            end))
+        end)
+        if ok then
+            FastAttackHookInstalled = true
+        else
+            warn("[FastAttack] Hook unavailable")
         end
     end
 
-    -- Основной поток: принудительная остановка анимации атаки и фиксация позиции
+    -- Поток: остановка анимаций удара и фиксация позиции
     FastAttackAnchorThread = task.spawn(function()
         while State.FastAttackEnabled do
             task.wait(0.05)
@@ -1201,12 +1177,13 @@ local function StartFastAttack()
             if char then
                 local hum = char:FindFirstChildOfClass("Humanoid")
                 local hrp = char:FindFirstChild("HumanoidRootPart")
-                -- Останавливаем все треки анимации, содержащие "attack"/"swing"/"slash"
                 if hum then
                     local animator = hum:FindFirstChildOfClass("Animator")
                     if animator then
-                        for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                            local aname = track.Animation and track.Animation.Name or ""
+                        local tracks = animator:GetPlayingAnimationTracks()
+                        for _, track in ipairs(tracks) do
+                            local anim = track.Animation
+                            local aname = anim and anim.Name or ""
                             local lname = aname:lower()
                             if lname:find("attack") or lname:find("swing") or lname:find("slash")
                                 or lname:find("m1") or lname:find("punch") or lname:find("kick") then
@@ -1215,11 +1192,8 @@ local function StartFastAttack()
                         end
                     end
                 end
-                -- Фиксация позиции: гасим Velocity и удерживаем CFrame
-                if hrp then
-                    if FastAttackLastCFrame then
-                        hrp.CFrame = FastAttackLastCFrame
-                    end
+                if hrp and FastAttackLastCFrame then
+                    hrp.CFrame = FastAttackLastCFrame
                     hrp.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
                     hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
                 end
@@ -1227,23 +1201,27 @@ local function StartFastAttack()
         end
     end)
 
-    -- Поток для сброса FastAttackLastCFrame (чтобы он не «залипал»)
-    task.spawn(function()
-        while State.FastAttackEnabled do
-            task.wait(0.5)
-            local char = LocalPlayer.Character
-            if char then
-                local hrp = char:FindFirstChild("HumanoidRootPart")
-                if hrp then FastAttackLastCFrame = hrp.CFrame end
-            end
+    -- Соединение для запоминания позиции (чтобы игрока не сдвигало при атаках)
+    FastAttackAnchorConn = RunService.Heartbeat:Connect(function()
+        if not State.FastAttackEnabled then return end
+        local char = LocalPlayer.Character
+        if char then
+            local hrp = char:FindFirstChild("HumanoidRootPart")
+            if hrp then FastAttackLastCFrame = hrp.CFrame end
         end
     end)
 end
 
 local function StopFastAttack()
     State.FastAttackEnabled = false
-    if FastAttackThread then task.cancel(FastAttackThread); FastAttackThread = nil end
-    if FastAttackAnchorThread then task.cancel(FastAttackAnchorThread); FastAttackAnchorThread = nil end
+    if FastAttackAnchorThread then
+        pcall(function() task.cancel(FastAttackAnchorThread) end)
+        FastAttackAnchorThread = nil
+    end
+    if FastAttackAnchorConn then
+        pcall(function() FastAttackAnchorConn:Disconnect() end)
+        FastAttackAnchorConn = nil
+    end
     FastAttackLastCFrame = nil
 end
 -- ============================================================
