@@ -129,7 +129,6 @@ local State = {
     MenuLockedState = false,
     AutoTeamEnabled = false,
     MenuFixedState = false,
-    FastAttackEnabled = false,
 }
 
 local function loadConfig()
@@ -175,12 +174,6 @@ local KillAuraThread = nil
 local FullbrightThread = nil
 local RemoveFogThread = nil
 local HomeThread = nil
--- FastAttack
-local FastAttackThread = nil
-local FastAttackAnchorConn = nil
-local FastAttackLastCFrame = nil
-local FastAttackSpeed = 1.0
-local FastAttackRange = 1.0
 
 local MenuLocked = State.MenuLockedState
 local MenuFixed = State.MenuFixedState
@@ -195,6 +188,7 @@ local SelectedTeam = "Marines"
 
 local playtimeStart = tick()
 
+-- Определяем serverStartTime как можно надёжнее
 local serverStartTime = nil
 pcall(function()
     local t = workspace:GetServerTimeNow()
@@ -1120,82 +1114,6 @@ local function StopRemoveFog()
     Lighting.FogStart = normalLighting.FogStart
 end
 
--- ================= FAST ATTACK =================
-local function StartFastAttack()
-    if FastAttackThread then return end
-
-    FastAttackThread = task.spawn(function()
-        while State.FastAttackEnabled do
-            local char = LocalPlayer.Character
-            local hum = char and char:FindFirstChildOfClass("Humanoid")
-            local hrp = char and char:FindFirstChild("HumanoidRootPart")
-            local tool = char and char:FindFirstChildWhichIsA("Tool")
-
-            local speed = FastAttackSpeed
-            if type(speed) ~= "number" or speed <= 0 then speed = 1 end
-            local interval = 0.55 / speed
-            if interval < 0.03 then interval = 0.03 end
-
-            if hrp and hum and hum.Health > 0 then
-                if tool then
-                    pcall(function() tool:Activate() end)
-                else
-                    pcall(function()
-                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, true, game, 1)
-                        VirtualInputManager:SendMouseButtonEvent(0, 0, 0, false, game, 1)
-                    end)
-                end
-
-                local animator = hum:FindFirstChildOfClass("Animator")
-                if animator then
-                    for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                        local okName, aname = pcall(function()
-                            local a = track.Animation
-                            return (a and a.Name or ""):lower()
-                        end)
-                        if okName and type(aname) == "string" then
-                            if aname:find("attack") or aname:find("swing") or aname:find("slash")
-                               or aname:find("m1") or aname:find("punch") or aname:find("kick")
-                               or aname:find("tool") or aname:find("hit") then
-                                pcall(function() track:Stop(0) end)
-                            end
-                        end
-                    end
-                end
-
-                pcall(function()
-                    hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
-                    hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                    if FastAttackLastCFrame then hrp.CFrame = FastAttackLastCFrame end
-                end)
-            end
-
-            task.wait(interval)
-        end
-    end)
-
-    FastAttackAnchorConn = RunService.Heartbeat:Connect(function()
-        if not State.FastAttackEnabled then return end
-        local char = LocalPlayer.Character
-        local hrp = char and char:FindFirstChild("HumanoidRootPart")
-        if hrp then FastAttackLastCFrame = hrp.CFrame end
-    end)
-end
-
-local function StopFastAttack()
-    State.FastAttackEnabled = false
-    if FastAttackThread then
-        pcall(function() task.cancel(FastAttackThread) end)
-        FastAttackThread = nil
-    end
-    if FastAttackAnchorConn then
-        pcall(function() FastAttackAnchorConn:Disconnect() end)
-        FastAttackAnchorConn = nil
-    end
-    FastAttackLastCFrame = nil
-end
--- ================= /FAST ATTACK =================
-
 local PlayerESPTable = {}
 
 local function CreatePlayerESP(player)
@@ -2003,17 +1921,6 @@ CreateToggle(MiscPage, "Auto Team", "AutoTeamEnabled", function(s)
 end)
 CreateDropdown(MiscPage, "Team", {"Marines", "Pirates"}, 1, function(sel) SelectedTeam = sel end)
 
-CreateSection(MiscPage, "Fast Attack")
-CreateToggle(MiscPage, "Fast Attack", "FastAttackEnabled", function(s)
-    if s then StartFastAttack() else StopFastAttack() end
-end)
-CreateSlider(MiscPage, "Attack Speed", 1, 50, 10, function(value)
-    FastAttackSpeed = value / 10
-end)
-CreateSlider(MiscPage, "Attack Range", 1, 50, 10, function(value)
-    FastAttackRange = value / 10
-end)
-
 local RaidsPage = CreateTab("Raids")
 CreateSection(RaidsPage, "Auto Raid")
 CreateToggle(RaidsPage, "Auto Raid", "AutoRaidEnabled", function(s) if s then StartAutoRaid() else StopAutoRaid() end end)
@@ -2163,25 +2070,30 @@ LocalPlayer.CharacterAdded:Connect(function()
     if not State.FlyEnabled and not State.AutoFarmFruitEnabled then DisableNoclip() end
 end)
 
+-- === ИСПРАВЛЕННЫЙ HOME THREAD ===
 HomeThread = task.spawn(function()
-    local maxReasonableTime = 115 * 24 * 60 * 60
+    local maxReasonableTime = 115 * 24 * 60 * 60 -- 115 дней в секундах
 
     while true do
         task.wait(1)
 
+        -- Playtime
         local playtime = tick() - playtimeStart
         local ph = math.floor(playtime / 3600)
         local pm = math.floor((playtime % 3600) / 60)
         local ps = math.floor(playtime % 60)
         if playtimeLabel then playtimeLabel.Text = string.format("Playtime: %02d:%02d:%02d", ph, pm, ps) end
 
+        -- Server Age: пробуем несколько источников
         local serverTime = nil
 
+        -- Метод 1: DistributedGameTime
         local ok1, dt1 = pcall(function() return Workspace.DistributedGameTime end)
         if ok1 and type(dt1) == "number" and dt1 > 0 and dt1 < maxReasonableTime then
             serverTime = dt1
         end
 
+        -- Метод 2: GetServerTimeNow - разница с сохранённым значением
         if not serverTime and serverStartTime and serverStartTime > 1e15 then
             local ok2, now2 = pcall(function() return workspace:GetServerTimeNow() end)
             if ok2 and type(now2) == "number" and now2 > serverStartTime then
@@ -2192,6 +2104,7 @@ HomeThread = task.spawn(function()
             end
         end
 
+        -- Если ничего не сработало — используем playtime как fallback
         if not serverTime then
             serverTime = playtime
         end
@@ -2266,7 +2179,6 @@ task.spawn(function()
     if State.ChamsEnabled then StartChams() end
     if State.TracersEnabled then StartTracers() end
     if State.AutoTeamEnabled then selectTeam(SelectedTeam) end
-    if State.FastAttackEnabled then StartFastAttack() end
     if State.ESPEnabled then
         for _, data in pairs(Tracked) do
             if data.Gui then data.Gui.Enabled = true end
