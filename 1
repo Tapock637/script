@@ -9,6 +9,7 @@ local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local Lighting = game:GetService("Lighting")
+local PhysicsService = game:GetService("PhysicsService")
 
 local LocalPlayer = Players.LocalPlayer
 if not LocalPlayer then
@@ -109,6 +110,7 @@ local State = {
     KillAuraEnabled = false,
     MenuLockedState = false,
     AutoTeamEnabled = false,
+    MenuFixedState = false,
 }
 
 local function loadConfig()
@@ -156,6 +158,7 @@ local RemoveFogThread = nil
 local HomeThread = nil
 
 local MenuLocked = State.MenuLockedState
+local MenuFixed = State.MenuFixedState
 local CurrentKeybind = Enum.KeyCode.RightShift
 local WaitingForKey = false
 local SelectedBoss = "Gorilla King"
@@ -165,11 +168,25 @@ local MasteryType = "Melee"
 local RaidWeapon = "Melee"
 local SelectedTeam = "Marines"
 
--- Home variables
 local playtimeStart = tick()
-local lastFullMoonTime = 0
-local lastFactoryTime = 0
-local lastPirateAttackTime = 0
+
+local NOCLIP_GROUP = "WindHaserNoclip"
+pcall(function() PhysicsService:RegisterCollisionGroup(NOCLIP_GROUP) end)
+pcall(function()
+    PhysicsService:CollisionGroupSetCollidable(NOCLIP_GROUP, "Default", false)
+    PhysicsService:CollisionGroupSetCollidable(NOCLIP_GROUP, NOCLIP_GROUP, false)
+end)
+
+local function SetCharacterCollisionGroup(group)
+    local char = LocalPlayer.Character
+    if not char then return end
+    for _, part in ipairs(char:GetDescendants()) do
+        if part:IsA("BasePart") then part.CollisionGroup = group end
+    end
+end
+
+local function EnableNoclip() SetCharacterCollisionGroup(NOCLIP_GROUP) end
+local function DisableNoclip() SetCharacterCollisionGroup("Default") end
 
 local function GetCommF()
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
@@ -187,23 +204,16 @@ end
 
 local function StripSuffix(name) return (name:gsub("%.%d+$", "")) end
 
-local function GetFruitBaseName(str)
-    local cleanName = StripSuffix(str)
-    local lower = cleanName:lower()
-    for fname, _ in pairs(FRUIT_CODES) do
-        local fl = fname:lower()
-        local base = fl:gsub(" fruit", "")
-        if lower == fl or lower == base then return base end
-    end
-    return nil
-end
-
 local function IsFruitName(str)
     if type(str) ~= "string" then return false end
     if HasExcluded(str) then return false end
-    local lower = str:lower()
-    if lower == "ice" or lower == "magma" then return false end
-    return GetFruitBaseName(str) ~= nil
+    local cleanName = StripSuffix(str):lower()
+    for fname, _ in pairs(FRUIT_CODES) do
+        if cleanName == fname:lower() then
+            return true
+        end
+    end
+    return false
 end
 
 local function IsNpc(inst)
@@ -361,16 +371,6 @@ local function HasAnyFruit()
     return false
 end
 
-local function SetCollision(enabled)
-    local char = LocalPlayer.Character
-    if not char then return end
-    for _, part in ipairs(char:GetDescendants()) do
-        if part:IsA("BasePart") then part.CanCollide = enabled end
-    end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if hrp then hrp.CanCollide = enabled end
-end
-
 local function IsTeamSelected()
     if LocalPlayer.Team ~= nil and LocalPlayer.Team.Name ~= "" then return true end
     local data = LocalPlayer:FindFirstChild("Data")
@@ -488,12 +488,12 @@ local function StartFlyToFruit()
         if not hrp then return end
         local target = GetNearestFruit()
         if not target then
-            SetCollision(true)
+            DisableNoclip()
             local bv = hrp:FindFirstChildOfClass("BodyVelocity")
             if bv then bv:Destroy() end
             return
         end
-        SetCollision(false)
+        if char.HumanoidRootPart.CollisionGroup ~= NOCLIP_GROUP then EnableNoclip() end
         if not hrp:FindFirstChildOfClass("BodyVelocity") then
             local bv = Instance.new("BodyVelocity")
             bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
@@ -509,7 +509,7 @@ end
 
 local function StopFlyToFruit()
     if FlyConn then FlyConn:Disconnect(); FlyConn = nil end
-    SetCollision(true)
+    DisableNoclip()
     local char = LocalPlayer.Character
     if char then
         local hrp = char:FindFirstChild("HumanoidRootPart")
@@ -521,7 +521,7 @@ local function StopAutoFarmFruit()
     State.AutoFarmFruitEnabled = false
     if AutoFarmFruitThread then task.cancel(AutoFarmFruitThread); AutoFarmFruitThread = nil end
     if AutoFlyConn then AutoFlyConn:Disconnect(); AutoFlyConn = nil end
-    SetCollision(true)
+    DisableNoclip()
 end
 
 local function StartAutoFarmFruit()
@@ -543,12 +543,12 @@ local function StartAutoFarmFruit()
         if not hrp then return end
         local target = GetNearestFruit()
         if not target then
-            SetCollision(true)
+            DisableNoclip()
             local bv = hrp:FindFirstChildOfClass("BodyVelocity")
             if bv then bv:Destroy() end
             return
         end
-        SetCollision(false)
+        if char.HumanoidRootPart.CollisionGroup ~= NOCLIP_GROUP then EnableNoclip() end
         if not hrp:FindFirstChildOfClass("BodyVelocity") then
             local bv = Instance.new("BodyVelocity")
             bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
@@ -668,7 +668,9 @@ local function StartAutoBossFarm()
             task.wait(0.5)
             local boss = FindBoss()
             if boss then
-                SetCollision(false)
+                if LocalPlayer.Character and LocalPlayer.Character.HumanoidRootPart.CollisionGroup ~= NOCLIP_GROUP then
+                    EnableNoclip()
+                end
                 local char = LocalPlayer.Character
                 local hrp = char and char:FindFirstChild("HumanoidRootPart")
                 if hrp then
@@ -693,7 +695,7 @@ local function StartAutoBossFarm()
                     end
                 end
             else
-                SetCollision(true)
+                DisableNoclip()
                 local char = LocalPlayer.Character
                 local hrp = char and char:FindFirstChild("HumanoidRootPart")
                 if hrp then
@@ -708,7 +710,7 @@ end
 local function StopAutoBossFarm()
     State.AutoBossFarmEnabled = false
     if AutoBossFarmThread then task.cancel(AutoBossFarmThread); AutoBossFarmThread = nil end
-    SetCollision(true)
+    DisableNoclip()
 end
 
 local function StartAutoMastery()
@@ -729,7 +731,9 @@ local function StartAutoMastery()
                     end
                 end
                 if nearestNpc then
-                    SetCollision(false)
+                    if LocalPlayer.Character and LocalPlayer.Character.HumanoidRootPart.CollisionGroup ~= NOCLIP_GROUP then
+                        EnableNoclip()
+                    end
                     local char = LocalPlayer.Character
                     local hrp = char and char:FindFirstChild("HumanoidRootPart")
                     if hrp then
@@ -755,7 +759,7 @@ end
 local function StopAutoMastery()
     State.AutoMasteryEnabled = false
     if AutoMasteryThread then task.cancel(AutoMasteryThread); AutoMasteryThread = nil end
-    SetCollision(true)
+    DisableNoclip()
 end
 
 local function StartAutoQuest()
@@ -792,7 +796,9 @@ local function StartAutoFarmLevel()
                     end
                 end
                 if nearestMob then
-                    SetCollision(false)
+                    if LocalPlayer.Character and LocalPlayer.Character.HumanoidRootPart.CollisionGroup ~= NOCLIP_GROUP then
+                        EnableNoclip()
+                    end
                     local char = LocalPlayer.Character
                     local hrp = char and char:FindFirstChild("HumanoidRootPart")
                     if hrp then
@@ -818,7 +824,7 @@ end
 local function StopAutoFarmLevel()
     State.AutoFarmLevelEnabled = false
     if AutoFarmLevelThread then task.cancel(AutoFarmLevelThread); AutoFarmLevelThread = nil end
-    SetCollision(true)
+    DisableNoclip()
 end
 
 local function StartAutoFarmNoQuest()
@@ -839,7 +845,9 @@ local function StartAutoFarmNoQuest()
                     end
                 end
                 if nearestMob then
-                    SetCollision(false)
+                    if LocalPlayer.Character and LocalPlayer.Character.HumanoidRootPart.CollisionGroup ~= NOCLIP_GROUP then
+                        EnableNoclip()
+                    end
                     local char = LocalPlayer.Character
                     local hrp = char and char:FindFirstChild("HumanoidRootPart")
                     if hrp then
@@ -865,7 +873,7 @@ end
 local function StopAutoFarmNoQuest()
     State.AutoFarmNoQuestEnabled = false
     if AutoFarmNoQuestThread then task.cancel(AutoFarmNoQuestThread); AutoFarmNoQuestThread = nil end
-    SetCollision(true)
+    DisableNoclip()
 end
 
 local function StartMobAura()
@@ -912,7 +920,9 @@ local function StartAutoMaterials()
                         if hrp then
                             local name = inst.Name:lower()
                             if name:find(SelectedMaterial:lower(), 1, true) then
-                                SetCollision(false)
+                                if LocalPlayer.Character and LocalPlayer.Character.HumanoidRootPart.CollisionGroup ~= NOCLIP_GROUP then
+                                    EnableNoclip()
+                                end
                                 local char = LocalPlayer.Character
                                 local charHrp = char and char:FindFirstChild("HumanoidRootPart")
                                 if charHrp then charHrp.CFrame = CFrame.new(hrp.Position + Vector3.new(0, 5, 0)) end
@@ -928,7 +938,7 @@ end
 local function StopAutoMaterials()
     State.AutoMaterialsEnabled = false
     if AutoMaterialsThread then task.cancel(AutoMaterialsThread); AutoMaterialsThread = nil end
-    SetCollision(true)
+    DisableNoclip()
 end
 
 local function StartAutoBones()
@@ -944,7 +954,9 @@ local function StartAutoBones()
                         if name:find("skeleton", 1, true) or name:find("zombie", 1, true) or name:find("mummy", 1, true) then
                             local hrp = inst:FindFirstChild("HumanoidRootPart")
                             if hrp then
-                                SetCollision(false)
+                                if LocalPlayer.Character and LocalPlayer.Character.HumanoidRootPart.CollisionGroup ~= NOCLIP_GROUP then
+                                    EnableNoclip()
+                                end
                                 local char = LocalPlayer.Character
                                 local charHrp = char and char:FindFirstChild("HumanoidRootPart")
                                 if charHrp then charHrp.CFrame = CFrame.new(hrp.Position + Vector3.new(0, 5, 0)) end
@@ -960,7 +972,7 @@ end
 local function StopAutoBones()
     State.AutoBonesEnabled = false
     if AutoBonesThread then task.cancel(AutoBonesThread); AutoBonesThread = nil end
-    SetCollision(true)
+    DisableNoclip()
 end
 
 local function StartAutoChests()
@@ -1025,6 +1037,8 @@ local function StartFullbright()
             Lighting.FogStart = 0
             Lighting.Ambient = Color3.fromRGB(178, 178, 178)
             Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
+            local atmo = Lighting:FindFirstChildOfClass("Atmosphere")
+            if atmo then atmo.Density = 0 end
             task.wait(1)
         end
     end)
@@ -1045,8 +1059,13 @@ local function StartRemoveFog()
     if RemoveFogThread then return end
     RemoveFogThread = task.spawn(function()
         while State.RemoveFogEnabled do
-            Lighting.FogEnd = 100000
-            Lighting.FogStart = 0
+            pcall(function()
+                local atmo = Lighting:FindFirstChildOfClass("Atmosphere")
+                if atmo then atmo.Density = 0 end
+                Lighting.FogEnd = 1e10
+                Lighting.FogStart = 0
+                Lighting.FogColor = Color3.new(0, 0, 0)
+            end)
             task.wait(0.1)
         end
     end)
@@ -1282,7 +1301,8 @@ BtnScale.Parent = ToggleBtn
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "Main"
 MainFrame.Size = UDim2.new(0, 720, 0, 420)
-MainFrame.Position = UDim2.new(0.5, -360, 0.5, -210)
+MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
 MainFrame.BackgroundColor3 = CONFIG.Background
 MainFrame.BorderSizePixel = 0
 MainFrame.Visible = false
@@ -1832,9 +1852,10 @@ CreateSection(HomePage, "Statistics")
 local playtimeLabel = CreateLabel(HomePage, "Playtime: 00:00:00", Color3.fromRGB(100, 255, 100))
 local serverTimeLabel = CreateLabel(HomePage, "Server Age: 00:00:00", Color3.fromRGB(100, 200, 255))
 CreateSection(HomePage, "Events")
-local fullMoonLabel = CreateLabel(HomePage, "Full Moon: --:--", Color3.fromRGB(255, 255, 100))
-local factoryLabel = CreateLabel(HomePage, "Factory: --:--", Color3.fromRGB(255, 150, 100))
-local pirateLabel = CreateLabel(HomePage, "Pirate Attack: --:--", Color3.fromRGB(255, 100, 150))
+local fullMoonLabel = CreateLabel(HomePage, "Full Moon: --:--:--", Color3.fromRGB(255, 255, 100))
+local factoryLabel = CreateLabel(HomePage, "Factory: --:--:--", Color3.fromRGB(255, 150, 100))
+local pirateLabel = CreateLabel(HomePage, "Pirate Attack: --:--:--", Color3.fromRGB(255, 100, 150))
+local fruitSpawnLabel = CreateLabel(HomePage, "Fruit Spawn: --:--:--", Color3.fromRGB(100, 255, 150))
 
 local MainPage = CreateTab("Main")
 CreateSection(MainPage, "Auto Farm Level")
@@ -1860,9 +1881,7 @@ CreateToggle(MainPage, "Auto Farm Chests", "AutoChestsEnabled", function(s) if s
 local MiscPage = CreateTab("Misc")
 CreateSection(MiscPage, "Auto Team")
 CreateToggle(MiscPage, "Auto Team", "AutoTeamEnabled", function(s)
-    if s then
-        selectTeam(SelectedTeam)
-    end
+    if s then selectTeam(SelectedTeam) end
 end)
 CreateDropdown(MiscPage, "Team", {"Marines", "Pirates"}, 1, function(sel) SelectedTeam = sel end)
 
@@ -1902,6 +1921,7 @@ local SettingsPage = CreateTab("Settings")
 CreateSection(SettingsPage, "UI")
 CreateToggle(SettingsPage, "Show FPS", "ShowFPSEnabled", nil)
 CreateToggle(SettingsPage, "Lock Menu Button", "MenuLockedState", function(s) MenuLocked = s end)
+CreateToggle(SettingsPage, "Lock Menu", "MenuFixedState", function(s) MenuFixed = s end)
 CreateSlider(SettingsPage, "Button Transparency", 0, 100, 0, function(value)
     local t = value / 100
     ToggleBtn.BackgroundTransparency = t
@@ -1918,12 +1938,14 @@ PageTitle.Text = "Home"
 
 local function UpdateScale()
     local vp = Workspace.CurrentCamera.ViewportSize
-    local fw = (vp.X * 0.9) / 720
-    local fh = (vp.Y * 0.85) / 420
-    local scale = math.clamp(math.min(fw, fh), 0.4, 1)
+    local baseW, baseH = 720, 420
+    local fw = (vp.X * 0.9) / baseW
+    local fh = (vp.Y * 0.85) / baseH
+    local scale = math.clamp(math.min(fw, fh), 0.35, 1)
     if isMobile then
         scale = scale * 0.67
-        MainFrame.Position = UDim2.new(0.5, -360, 0.5, -210)
+        MainFrame.AnchorPoint = Vector2.new(0.5, 0.5)
+        MainFrame.Position = UDim2.new(0.5, 0, 0.5, 0)
     end
     MenuScale.Scale = scale
     local btnScale = math.clamp(vp.X / 1920, 0.75, 1)
@@ -1959,6 +1981,7 @@ ToggleBtn.InputEnded:Connect(function(input)
 end)
 local df, dfsp, dfspos = false, nil, nil
 TopBar.InputBegan:Connect(function(input)
+    if MenuFixed then return end
     if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
         df = true; dfsp = input.Position; dfspos = MainFrame.Position
     end
@@ -2008,44 +2031,35 @@ end)
 
 LocalPlayer.CharacterAdded:Connect(function()
     task.wait(1)
-    if not State.FlyEnabled and not State.AutoFarmFruitEnabled then SetCollision(true) end
+    if not State.FlyEnabled and not State.AutoFarmFruitEnabled then DisableNoclip() end
 end)
 
--- Home update loop
 HomeThread = task.spawn(function()
     while true do
         task.wait(1)
-        
+
         local playtime = tick() - playtimeStart
         local ph = math.floor(playtime / 3600)
         local pm = math.floor((playtime % 3600) / 60)
         local ps = math.floor(playtime % 60)
-        if playtimeLabel then
-            playtimeLabel.Text = string.format("Playtime: %02d:%02d:%02d", ph, pm, ps)
-        end
-        
+        if playtimeLabel then playtimeLabel.Text = string.format("Playtime: %02d:%02d:%02d", ph, pm, ps) end
+
         local serverTime = Workspace.DistributedGameTime
         local sh = math.floor(serverTime / 3600)
         local sm = math.floor((serverTime % 3600) / 60)
         local ss = math.floor(serverTime % 60)
-        if serverTimeLabel then
-            serverTimeLabel.Text = string.format("Server Age: %02d:%02d:%02d", sh, sm, ss)
-        end
-        
-        local cycleTime = serverTime % (20 * 60)
-        local inGameMinute = cycleTime
+        if serverTimeLabel then serverTimeLabel.Text = string.format("Server Age: %02d:%02d:%02d", sh, sm, ss) end
+
         local fullMoonCycle = 8 * 20 * 60
         local timeUntil = fullMoonCycle - (serverTime % fullMoonCycle)
-        if timeUntil > fullMoonCycle - 55 * 60 then
-            timeUntil = timeUntil - fullMoonCycle
-        end
+        if timeUntil > fullMoonCycle - 55 * 60 then timeUntil = timeUntil - fullMoonCycle end
         if fullMoonLabel then
             local fh = math.floor(timeUntil / 3600)
             local fm = math.floor((timeUntil % 3600) / 60)
             local fs = math.floor(timeUntil % 60)
             fullMoonLabel.Text = string.format("Full Moon: %02d:%02d:%02d", fh, fm, fs)
         end
-        
+
         local factoryCycle = 90 * 60
         local timeUntilFactory = factoryCycle - (serverTime % factoryCycle)
         if factoryLabel then
@@ -2054,7 +2068,7 @@ HomeThread = task.spawn(function()
             local fas = math.floor(timeUntilFactory % 60)
             factoryLabel.Text = string.format("Factory: %02d:%02d:%02d", fah, fam, fas)
         end
-        
+
         local pirateCycle = 75 * 60
         local timeUntilPirate = pirateCycle - (serverTime % pirateCycle)
         if pirateLabel then
@@ -2062,6 +2076,18 @@ HomeThread = task.spawn(function()
             local pam = math.floor((timeUntilPirate % 3600) / 60)
             local pas = math.floor(timeUntilPirate % 60)
             pirateLabel.Text = string.format("Pirate Attack: %02d:%02d:%02d", pah, pam, pas)
+        end
+
+        local isWeekend = false
+        local day = os.date("*t").wday
+        if day == 1 or day == 7 then isWeekend = true end
+        local fruitCycle = isWeekend and 45 * 60 or 60 * 60
+        local timeUntilFruit = fruitCycle - (serverTime % fruitCycle)
+        if fruitSpawnLabel then
+            local frh = math.floor(timeUntilFruit / 3600)
+            local frm = math.floor((timeUntilFruit % 3600) / 60)
+            local frs = math.floor(timeUntilFruit % 60)
+            fruitSpawnLabel.Text = string.format("Fruit Spawn: %02d:%02d:%02d", frh, frm, frs)
         end
     end
 end)
