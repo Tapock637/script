@@ -170,8 +170,21 @@ local SelectedTeam = "Marines"
 
 local playtimeStart = tick()
 
--- === ИСПРАВЛЕНИЕ: получаем время старта сервера один раз ===
-local serverStartTime = workspace:GetServerTimeNow()
+-- === ИСПРАВЛЕНИЕ ВРЕМЕНИ СЕРВЕРА ===
+-- Используем os.time() как основной источник, чтобы таймер всегда шёл.
+-- Если GetServerTimeNow() доступен и не равен 0, используем его для синхронизации.
+local serverStartTime = nil
+pcall(function()
+    local t = workspace:GetServerTimeNow()
+    if t and t > 0 then
+        serverStartTime = t
+    end
+end)
+
+if not serverStartTime then
+    -- Fallback: используем os.time() (время устройства)
+    serverStartTime = os.time() * 1000000 -- переводим в микросекунды для совместимости
+end
 
 local NOCLIP_GROUP = "WindHaserNoclip"
 pcall(function() PhysicsService:RegisterCollisionGroup(NOCLIP_GROUP) end)
@@ -611,22 +624,35 @@ local function GetClosestPlayer()
     return closest
 end
 
+-- === ИСПРАВЛЕННЫЙ АИМБОТ ЧЕРЕЗ ХУК МЫШИ ===
+local oldIndex
+oldIndex = hookmetamethod(game, "__index", function(self, key)
+    if not checkcaller() and self == LocalPlayer:GetMouse() then
+        if key == "Hit" or key == "Target" then
+            if State.AimbotEnabled then
+                local target = GetClosestPlayer()
+                if target and target.Character then
+                    local part = target.Character:FindFirstChild("Head")
+                    if part then
+                        if key == "Hit" then
+                            return CFrame.new(part.Position)
+                        else
+                            return part
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return oldIndex(self, key)
+end)
+
 local function StartAimbot()
-    if AimbotConn then AimbotConn:Disconnect() end
-    AimbotConn = RunService.RenderStepped:Connect(function()
-        if not State.AimbotEnabled then return end
-        local target = GetClosestPlayer()
-        if not target or not target.Character then return end
-        local targetHead = target.Character:FindFirstChild("Head")
-        if not targetHead then return end
-        local mouse = LocalPlayer:GetMouse()
-        mouse.Hit = CFrame.new(targetHead.Position)
-    end)
+    -- Хук уже установлен выше, дополнительных действий не требуется
 end
 
 local function StopAimbot()
-    if AimbotConn then AimbotConn:Disconnect() end
-    AimbotConn = nil
+    -- Хук остаётся, но проверка State.AimbotEnabled отключает подмену
 end
 
 local function FindBoss()
@@ -2031,14 +2057,28 @@ HomeThread = task.spawn(function()
     while true do
         task.wait(1)
 
+        -- Playtime (время с запуска скрипта)
         local playtime = tick() - playtimeStart
         local ph = math.floor(playtime / 3600)
         local pm = math.floor((playtime % 3600) / 60)
         local ps = math.floor(playtime % 60)
         if playtimeLabel then playtimeLabel.Text = string.format("Playtime: %02d:%02d:%02d", ph, pm, ps) end
 
-        -- Получаем реальное время сервера в секундах
-        local serverTime = (workspace:GetServerTimeNow() - serverStartTime) / 1000000
+        -- Server Age (реальное время работы сервера)
+        -- Используем os.time() для синхронизации, если GetServerTimeNow() вернул 0.
+        local currentTime
+        if serverStartTime > 1e15 then -- если serverStartTime в микросекундах (GetServerTimeNow)
+            local now = workspace:GetServerTimeNow()
+            if now and now > 0 then
+                currentTime = now
+            else
+                currentTime = os.time() * 1000000
+            end
+        else
+            currentTime = os.time() * 1000000
+        end
+
+        local serverTime = (currentTime - serverStartTime) / 1000000
         local sh = math.floor(serverTime / 3600)
         local sm = math.floor((serverTime % 3600) / 60)
         local ss = math.floor(serverTime % 60)
