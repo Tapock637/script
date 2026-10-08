@@ -170,6 +170,9 @@ local SelectedTeam = "Marines"
 
 local playtimeStart = tick()
 
+-- === ИСПРАВЛЕНИЕ: получаем время старта сервера один раз ===
+local serverStartTime = workspace:GetServerTimeNow()
+
 local NOCLIP_GROUP = "WindHaserNoclip"
 pcall(function() PhysicsService:RegisterCollisionGroup(NOCLIP_GROUP) end)
 pcall(function()
@@ -2023,6 +2026,7 @@ LocalPlayer.CharacterAdded:Connect(function()
     if not State.FlyEnabled and not State.AutoFarmFruitEnabled then DisableNoclip() end
 end)
 
+-- === ИСПРАВЛЕННЫЙ HOME THREAD ===
 HomeThread = task.spawn(function()
     while true do
         task.wait(1)
@@ -2033,7 +2037,8 @@ HomeThread = task.spawn(function()
         local ps = math.floor(playtime % 60)
         if playtimeLabel then playtimeLabel.Text = string.format("Playtime: %02d:%02d:%02d", ph, pm, ps) end
 
-        local serverTime = Workspace.DistributedGameTime
+        -- Получаем реальное время сервера в секундах
+        local serverTime = (workspace:GetServerTimeNow() - serverStartTime) / 1000000
         local sh = math.floor(serverTime / 3600)
         local sm = math.floor((serverTime % 3600) / 60)
         local ss = math.floor(serverTime % 60)
