@@ -43,26 +43,44 @@ local CONFIG = {
 
 local FRUIT_CODES = {
     ["Rocket Fruit"] = "Rocket-Rocket", ["Spin Fruit"] = "Spin-Spin",
-    ["Chop Fruit"] = "Chop-Chop", ["Spring Fruit"] = "Spring-Spring",
-    ["Bomb Fruit"] = "Bomb-Bomb", ["Smoke Fruit"] = "Smoke-Smoke",
-    ["Spike Fruit"] = "Spike-Spike", ["Flame Fruit"] = "Flame-Flame",
-    ["Falcon Fruit"] = "Bird-Bird: Falcon", ["Ice Fruit"] = "Ice-Ice",
-    ["Sand Fruit"] = "Sand-Sand", ["Dark Fruit"] = "Dark-Dark",
-    ["Diamond Fruit"] = "Diamond-Diamond", ["Light Fruit"] = "Light-Light",
-    ["Rubber Fruit"] = "Rubber-Rubber", ["Barrier Fruit"] = "Barrier-Barrier",
-    ["Ghost Fruit"] = "Revive-Revive", ["Magma Fruit"] = "Magma-Magma",
-    ["Quake Fruit"] = "Quake-Quake",
-    ["Buddha Fruit"] = "Buddha-Buddha", ["Love Fruit"] = "Love-Love",
-    ["Creation Fruit"] = "Creation-Creation", ["Spider Fruit"] = "Spider-Spider",
-    ["Sound Fruit"] = "Sound-Sound", ["Phoenix Fruit"] = "Bird-Bird: Phoenix",
-    ["Portal Fruit"] = "Portal-Portal", ["Rumble Fruit"] = "Rumble-Rumble",
-    ["Pain Fruit"] = "Pain-Pain", ["Blizzard Fruit"] = "Blizzard-Blizzard",
-    ["Gravity Fruit"] = "Gravity-Gravity", ["Mammoth Fruit"] = "Mammoth-Mammoth",
-    ["T-Rex Fruit"] = "T-Rex-T-Rex", ["Dough Fruit"] = "Dough-Dough",
-    ["Shadow Fruit"] = "Shadow-Shadow", ["Venom Fruit"] = "Venom-Venom",
-    ["Control Fruit"] = "Control-Control", ["Spirit Fruit"] = "Spirit-Spirit",
-    ["Dragon Fruit"] = "Dragon-Dragon", ["Leopard Fruit"] = "Leopard-Leopard",
-    ["Kitsune Fruit"] = "Kitsune-Kitsune",
+    ["Chop Fruit"] = "Chop-Chop", ["Chop"] = "Chop-Chop",
+    ["Spring Fruit"] = "Spring-Spring", ["Spring"] = "Spring-Spring",
+    ["Bomb Fruit"] = "Bomb-Bomb", ["Bomb"] = "Bomb-Bomb",
+    ["Smoke Fruit"] = "Smoke-Smoke", ["Smoke"] = "Smoke-Smoke",
+    ["Spike Fruit"] = "Spike-Spike", ["Spike"] = "Spike-Spike",
+    ["Flame Fruit"] = "Flame-Flame", ["Flame"] = "Flame-Flame",
+    ["Falcon Fruit"] = "Bird-Bird: Falcon", ["Falcon"] = "Bird-Bird: Falcon",
+    ["Ice Fruit"] = "Ice-Ice", ["Ice"] = "Ice-Ice",
+    ["Sand Fruit"] = "Sand-Sand", ["Sand"] = "Sand-Sand",
+    ["Dark Fruit"] = "Dark-Dark", ["Dark"] = "Dark-Dark",
+    ["Diamond Fruit"] = "Diamond-Diamond", ["Diamond"] = "Diamond-Diamond",
+    ["Light Fruit"] = "Light-Light", ["Light"] = "Light-Light",
+    ["Rubber Fruit"] = "Rubber-Rubber", ["Rubber"] = "Rubber-Rubber",
+    ["Barrier Fruit"] = "Barrier-Barrier", ["Barrier"] = "Barrier-Barrier",
+    ["Ghost Fruit"] = "Revive-Revive", ["Ghost"] = "Revive-Revive",
+    ["Magma Fruit"] = "Magma-Magma", ["Magma"] = "Magma-Magma",
+    ["Quake Fruit"] = "Quake-Quake", ["Quake"] = "Quake-Quake",
+    ["Buddha Fruit"] = "Buddha-Buddha", ["Buddha"] = "Buddha-Buddha",
+    ["Love Fruit"] = "Love-Love", ["Love"] = "Love-Love",
+    ["Creation Fruit"] = "Creation-Creation", ["Creation"] = "Creation-Creation",
+    ["Spider Fruit"] = "Spider-Spider", ["Spider"] = "Spider-Spider",
+    ["Sound Fruit"] = "Sound-Sound", ["Sound"] = "Sound-Sound",
+    ["Phoenix Fruit"] = "Bird-Bird: Phoenix", ["Phoenix"] = "Bird-Bird: Phoenix",
+    ["Portal Fruit"] = "Portal-Portal", ["Portal"] = "Portal-Portal",
+    ["Rumble Fruit"] = "Rumble-Rumble", ["Rumble"] = "Rumble-Rumble",
+    ["Pain Fruit"] = "Pain-Pain", ["Pain"] = "Pain-Pain",
+    ["Blizzard Fruit"] = "Blizzard-Blizzard", ["Blizzard"] = "Blizzard-Blizzard",
+    ["Gravity Fruit"] = "Gravity-Gravity", ["Gravity"] = "Gravity-Gravity",
+    ["Mammoth Fruit"] = "Mammoth-Mammoth", ["Mammoth"] = "Mammoth-Mammoth",
+    ["T-Rex Fruit"] = "T-Rex-T-Rex", ["T-Rex"] = "T-Rex-T-Rex",
+    ["Dough Fruit"] = "Dough-Dough", ["Dough"] = "Dough-Dough",
+    ["Shadow Fruit"] = "Shadow-Shadow", ["Shadow"] = "Shadow-Shadow",
+    ["Venom Fruit"] = "Venom-Venom", ["Venom"] = "Venom-Venom",
+    ["Control Fruit"] = "Control-Control", ["Control"] = "Control-Control",
+    ["Spirit Fruit"] = "Spirit-Spirit", ["Spirit"] = "Spirit-Spirit",
+    ["Dragon Fruit"] = "Dragon-Dragon", ["Dragon"] = "Dragon-Dragon",
+    ["Leopard Fruit"] = "Leopard-Leopard", ["Leopard"] = "Leopard-Leopard",
+    ["Kitsune Fruit"] = "Kitsune-Kitsune", ["Kitsune"] = "Kitsune-Kitsune",
 }
 
 local BOSS_LIST = {
@@ -171,20 +189,8 @@ local SelectedTeam = "Marines"
 local playtimeStart = tick()
 
 -- === ИСПРАВЛЕНИЕ ВРЕМЕНИ СЕРВЕРА ===
--- Используем os.time() как основной источник, чтобы таймер всегда шёл.
--- Если GetServerTimeNow() доступен и не равен 0, используем его для синхронизации.
-local serverStartTime = nil
-pcall(function()
-    local t = workspace:GetServerTimeNow()
-    if t and t > 0 then
-        serverStartTime = t
-    end
-end)
-
-if not serverStartTime then
-    -- Fallback: используем os.time() (время устройства)
-    serverStartTime = os.time() * 1000000 -- переводим в микросекунды для совместимости
-end
+-- Используем Workspace.DistributedGameTime — это реальное время работы сервера в секундах.
+local serverStartTime = Workspace.DistributedGameTime
 
 local NOCLIP_GROUP = "WindHaserNoclip"
 pcall(function() PhysicsService:RegisterCollisionGroup(NOCLIP_GROUP) end)
@@ -626,7 +632,7 @@ end
 
 -- === ИСПРАВЛЕННЫЙ АИМБОТ ЧЕРЕЗ ХУК МЫШИ ===
 local oldIndex
-oldIndex = hookmetamethod(game, "__index", function(self, key)
+oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
     if not checkcaller() and self == LocalPlayer:GetMouse() then
         if key == "Hit" or key == "Target" then
             if State.AimbotEnabled then
@@ -645,10 +651,10 @@ oldIndex = hookmetamethod(game, "__index", function(self, key)
         end
     end
     return oldIndex(self, key)
-end)
+end))
 
 local function StartAimbot()
-    -- Хук уже установлен выше, дополнительных действий не требуется
+    -- Хук уже установлен, дополнительных действий не требуется
 end
 
 local function StopAimbot()
@@ -1052,8 +1058,6 @@ local function StartFullbright()
             Lighting.FogStart = 0
             Lighting.Ambient = Color3.fromRGB(178, 178, 178)
             Lighting.OutdoorAmbient = Color3.fromRGB(178, 178, 178)
-            local atmo = Lighting:FindFirstChildOfClass("Atmosphere")
-            if atmo then atmo.Density = 0 end
             task.wait(1)
         end
     end)
@@ -1075,6 +1079,7 @@ local function StartRemoveFog()
     RemoveFogThread = task.spawn(function()
         while State.RemoveFogEnabled do
             pcall(function()
+                -- Убираем Atmosphere, который перекрывает туман
                 local atmo = Lighting:FindFirstChildOfClass("Atmosphere")
                 if atmo then
                     atmo.Density = 0
@@ -2064,21 +2069,8 @@ HomeThread = task.spawn(function()
         local ps = math.floor(playtime % 60)
         if playtimeLabel then playtimeLabel.Text = string.format("Playtime: %02d:%02d:%02d", ph, pm, ps) end
 
-        -- Server Age (реальное время работы сервера)
-        -- Используем os.time() для синхронизации, если GetServerTimeNow() вернул 0.
-        local currentTime
-        if serverStartTime > 1e15 then -- если serverStartTime в микросекундах (GetServerTimeNow)
-            local now = workspace:GetServerTimeNow()
-            if now and now > 0 then
-                currentTime = now
-            else
-                currentTime = os.time() * 1000000
-            end
-        else
-            currentTime = os.time() * 1000000
-        end
-
-        local serverTime = (currentTime - serverStartTime) / 1000000
+        -- Server Age (реальное время работы сервера через DistributedGameTime)
+        local serverTime = Workspace.DistributedGameTime
         local sh = math.floor(serverTime / 3600)
         local sm = math.floor((serverTime % 3600) / 60)
         local ss = math.floor(serverTime % 60)
