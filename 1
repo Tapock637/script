@@ -188,9 +188,27 @@ local SelectedTeam = "Marines"
 
 local playtimeStart = tick()
 
--- === ИСПРАВЛЕНИЕ ВРЕМЕНИ СЕРВЕРА ===
--- Используем Workspace.DistributedGameTime — это реальное время работы сервера в секундах.
-local serverStartTime = Workspace.DistributedGameTime
+-- Определяем serverStartTime как можно надёжнее
+local serverStartTime = nil
+pcall(function()
+    local t = workspace:GetServerTimeNow()
+    if type(t) == "number" and t > 0 then
+        serverStartTime = t
+    end
+end)
+
+if not serverStartTime then
+    pcall(function()
+        local t = Workspace.DistributedGameTime
+        if type(t) == "number" and t > 0 then
+            serverStartTime = t
+        end
+    end)
+end
+
+if not serverStartTime then
+    serverStartTime = tick()
+end
 
 local NOCLIP_GROUP = "WindHaserNoclip"
 pcall(function() PhysicsService:RegisterCollisionGroup(NOCLIP_GROUP) end)
@@ -630,7 +648,6 @@ local function GetClosestPlayer()
     return closest
 end
 
--- === ИСПРАВЛЕННЫЙ АИМБОТ ЧЕРЕЗ ХУК МЫШИ ===
 local oldIndex
 oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
     if not checkcaller() and self == LocalPlayer:GetMouse() then
@@ -653,13 +670,10 @@ oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
     return oldIndex(self, key)
 end))
 
-local function StartAimbot()
-    -- Хук уже установлен, дополнительных действий не требуется
-end
+local function StartAimbot() end
+local function StopAimbot() end
 
-local function StopAimbot()
-    -- Хук остаётся, но проверка State.AimbotEnabled отключает подмену
-end
+local SkillKeys = { "Z", "X", "C", "V", "F" }
 
 local function FindBoss()
     local myPos = GetMyPosition()
@@ -1079,7 +1093,6 @@ local function StartRemoveFog()
     RemoveFogThread = task.spawn(function()
         while State.RemoveFogEnabled do
             pcall(function()
-                -- Убираем Atmosphere, который перекрывает туман
                 local atmo = Lighting:FindFirstChildOfClass("Atmosphere")
                 if atmo then
                     atmo.Density = 0
@@ -2059,18 +2072,43 @@ end)
 
 -- === ИСПРАВЛЕННЫЙ HOME THREAD ===
 HomeThread = task.spawn(function()
+    local maxReasonableTime = 115 * 24 * 60 * 60 -- 115 дней в секундах
+
     while true do
         task.wait(1)
 
-        -- Playtime (время с запуска скрипта)
+        -- Playtime
         local playtime = tick() - playtimeStart
         local ph = math.floor(playtime / 3600)
         local pm = math.floor((playtime % 3600) / 60)
         local ps = math.floor(playtime % 60)
         if playtimeLabel then playtimeLabel.Text = string.format("Playtime: %02d:%02d:%02d", ph, pm, ps) end
 
-        -- Server Age (реальное время работы сервера через DistributedGameTime)
-        local serverTime = Workspace.DistributedGameTime
+        -- Server Age: пробуем несколько источников
+        local serverTime = nil
+
+        -- Метод 1: DistributedGameTime
+        local ok1, dt1 = pcall(function() return Workspace.DistributedGameTime end)
+        if ok1 and type(dt1) == "number" and dt1 > 0 and dt1 < maxReasonableTime then
+            serverTime = dt1
+        end
+
+        -- Метод 2: GetServerTimeNow - разница с сохранённым значением
+        if not serverTime and serverStartTime and serverStartTime > 1e15 then
+            local ok2, now2 = pcall(function() return workspace:GetServerTimeNow() end)
+            if ok2 and type(now2) == "number" and now2 > serverStartTime then
+                local diff = (now2 - serverStartTime) / 1000000
+                if diff > 0 and diff < maxReasonableTime then
+                    serverTime = diff
+                end
+            end
+        end
+
+        -- Если ничего не сработало — используем playtime как fallback
+        if not serverTime then
+            serverTime = playtime
+        end
+
         local sh = math.floor(serverTime / 3600)
         local sm = math.floor((serverTime % 3600) / 60)
         local ss = math.floor(serverTime % 60)
