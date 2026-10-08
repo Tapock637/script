@@ -17,6 +17,8 @@ if not LocalPlayer then
 end
 local PlayerGui = LocalPlayer:WaitForChild("PlayerGui")
 
+local isMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
+
 local CONFIG = {
     Title = "WindHaser Hub",
     Background = Color3.fromRGB(20, 20, 25),
@@ -106,6 +108,7 @@ local State = {
     TracersEnabled = false,
     KillAuraEnabled = false,
     MenuLockedState = false,
+    AutoTeamEnabled = false,
 }
 
 local function loadConfig()
@@ -149,6 +152,8 @@ local AutoChestsThread = nil
 local AutoRaidThread = nil
 local KillAuraThread = nil
 local FullbrightThread = nil
+local RemoveFogThread = nil
+local HomeThread = nil
 
 local MenuLocked = State.MenuLockedState
 local CurrentKeybind = Enum.KeyCode.RightShift
@@ -158,6 +163,13 @@ local SelectedMaterial = "Leather"
 local SelectedChip = "Flame"
 local MasteryType = "Melee"
 local RaidWeapon = "Melee"
+local SelectedTeam = "Marines"
+
+-- Home variables
+local playtimeStart = tick()
+local lastFullMoonTime = 0
+local lastFactoryTime = 0
+local lastPirateAttackTime = 0
 
 local function GetCommF()
     local remotes = ReplicatedStorage:FindFirstChild("Remotes")
@@ -189,6 +201,8 @@ end
 local function IsFruitName(str)
     if type(str) ~= "string" then return false end
     if HasExcluded(str) then return false end
+    local lower = str:lower()
+    if lower == "ice" or lower == "magma" then return false end
     return GetFruitBaseName(str) ~= nil
 end
 
@@ -367,10 +381,10 @@ local function IsTeamSelected()
     return false
 end
 
-local function selectTeam()
+local function selectTeam(teamName)
     local commF = GetCommF()
     if not commF then return false end
-    return pcall(function() commF:InvokeServer("SetTeam", CONFIG.Team) end)
+    return pcall(function() commF:InvokeServer("SetTeam", teamName) end)
 end
 
 local function GetFruitCode(toolName)
@@ -514,7 +528,7 @@ local function StartAutoFarmFruit()
     if State.AutoFarmFruitEnabled and AutoFarmFruitThread then return true end
 
     if not IsTeamSelected() then
-        selectTeam()
+        selectTeam(CONFIG.Team)
         task.wait(2.5)
         if not IsTeamSelected() then return false end
     end
@@ -1028,11 +1042,19 @@ local function StopFullbright()
 end
 
 local function StartRemoveFog()
-    Lighting.FogEnd = 100000
-    Lighting.FogStart = 0
+    if RemoveFogThread then return end
+    RemoveFogThread = task.spawn(function()
+        while State.RemoveFogEnabled do
+            Lighting.FogEnd = 100000
+            Lighting.FogStart = 0
+            task.wait(0.1)
+        end
+    end)
 end
 
 local function StopRemoveFog()
+    State.RemoveFogEnabled = false
+    if RemoveFogThread then task.cancel(RemoveFogThread); RemoveFogThread = nil end
     Lighting.FogEnd = normalLighting.FogEnd
     Lighting.FogStart = normalLighting.FogStart
 end
@@ -1347,7 +1369,7 @@ PageTitle.BackgroundTransparency = 1
 PageTitle.Font = Enum.Font.GothamBlack
 PageTitle.TextSize = 15
 PageTitle.TextColor3 = Color3.fromRGB(255, 255, 255)
-PageTitle.Text = "Main"
+PageTitle.Text = "Home"
 PageTitle.TextXAlignment = Enum.TextXAlignment.Left
 PageTitle.TextYAlignment = Enum.TextYAlignment.Center
 PageTitle.ZIndex = 9
@@ -1570,6 +1592,27 @@ local function CreateSection(parent, text)
     return Section
 end
 
+local function CreateLabel(parent, text, color)
+    local Label = Instance.new("TextLabel")
+    Label.Size = UDim2.new(1, 0, 0, 26)
+    Label.BackgroundColor3 = CONFIG.ButtonOff
+    Label.BorderSizePixel = 0
+    Label.Font = Enum.Font.GothamBold
+    Label.TextSize = 11
+    Label.TextColor3 = color or Color3.fromRGB(255, 255, 255)
+    Label.Text = text
+    Label.TextXAlignment = Enum.TextXAlignment.Left
+    Label.ZIndex = 8
+    Label.Parent = parent
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(0, 6)
+    corner.Parent = Label
+    local padding = Instance.new("UIPadding")
+    padding.PaddingLeft = UDim.new(0, 10)
+    padding.Parent = Label
+    return Label
+end
+
 local function CreateSlider(parent, text, min, max, default, callback)
     local SliderFrame = Instance.new("Frame")
     SliderFrame.Size = UDim2.new(1, 0, 0, 36)
@@ -1784,6 +1827,15 @@ local function CreateDropdown(parent, text, options, defaultIndex, callback)
     return DropdownFrame
 end
 
+local HomePage = CreateTab("Home")
+CreateSection(HomePage, "Statistics")
+local playtimeLabel = CreateLabel(HomePage, "Playtime: 00:00:00", Color3.fromRGB(100, 255, 100))
+local serverTimeLabel = CreateLabel(HomePage, "Server Age: 00:00:00", Color3.fromRGB(100, 200, 255))
+CreateSection(HomePage, "Events")
+local fullMoonLabel = CreateLabel(HomePage, "Full Moon: --:--", Color3.fromRGB(255, 255, 100))
+local factoryLabel = CreateLabel(HomePage, "Factory: --:--", Color3.fromRGB(255, 150, 100))
+local pirateLabel = CreateLabel(HomePage, "Pirate Attack: --:--", Color3.fromRGB(255, 100, 150))
+
 local MainPage = CreateTab("Main")
 CreateSection(MainPage, "Auto Farm Level")
 CreateToggle(MainPage, "Auto Farm Level", "AutoFarmLevelEnabled", function(s) if s then StartAutoFarmLevel() else StopAutoFarmLevel() end end)
@@ -1804,6 +1856,15 @@ CreateToggle(MainPage, "Auto Farm Materials", "AutoMaterialsEnabled", function(s
 CreateDropdown(MainPage, "Material Type", {"Leather", "Scrap Metal", "Magma Ore", "Angel Wings", "Dragon Scale", "Fish Tail", "Gunpowder", "Mystic Droplet"}, 1, function(sel) SelectedMaterial = sel end)
 CreateToggle(MainPage, "Auto Farm Bones", "AutoBonesEnabled", function(s) if s then StartAutoBones() else StopAutoBones() end end)
 CreateToggle(MainPage, "Auto Farm Chests", "AutoChestsEnabled", function(s) if s then StartAutoChests() else StopAutoChests() end end)
+
+local MiscPage = CreateTab("Misc")
+CreateSection(MiscPage, "Auto Team")
+CreateToggle(MiscPage, "Auto Team", "AutoTeamEnabled", function(s)
+    if s then
+        selectTeam(SelectedTeam)
+    end
+end)
+CreateDropdown(MiscPage, "Team", {"Marines", "Pirates"}, 1, function(sel) SelectedTeam = sel end)
 
 local RaidsPage = CreateTab("Raids")
 CreateSection(RaidsPage, "Auto Raid")
@@ -1850,17 +1911,24 @@ end)
 CreateSection(SettingsPage, "Keybind")
 CreateKeybindButton(SettingsPage, "Menu Key", Enum.KeyCode.RightShift, function(newKey) CurrentKeybind = newKey end)
 
-Tabs["Main"].TextColor3 = Color3.fromRGB(255, 255, 255)
-Tabs["Main"].BackgroundTransparency = 0
-Pages["Main"].Visible = true
-PageTitle.Text = "Main"
+Tabs["Home"].TextColor3 = Color3.fromRGB(255, 255, 255)
+Tabs["Home"].BackgroundTransparency = 0
+Pages["Home"].Visible = true
+PageTitle.Text = "Home"
 
 local function UpdateScale()
     local vp = Workspace.CurrentCamera.ViewportSize
     local fw = (vp.X * 0.9) / 720
     local fh = (vp.Y * 0.85) / 420
-    MenuScale.Scale = math.clamp(math.min(fw, fh), 0.4, 1)
-    BtnScale.Scale = math.clamp(vp.X / 1920, 0.75, 1)
+    local scale = math.clamp(math.min(fw, fh), 0.4, 1)
+    if isMobile then
+        scale = scale * 0.67
+        MainFrame.Position = UDim2.new(0.5, -360, 0.5, -210)
+    end
+    MenuScale.Scale = scale
+    local btnScale = math.clamp(vp.X / 1920, 0.75, 1)
+    if isMobile then btnScale = btnScale * 0.85 end
+    BtnScale.Scale = btnScale
 end
 UpdateScale()
 Workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(UpdateScale)
@@ -1943,6 +2011,61 @@ LocalPlayer.CharacterAdded:Connect(function()
     if not State.FlyEnabled and not State.AutoFarmFruitEnabled then SetCollision(true) end
 end)
 
+-- Home update loop
+HomeThread = task.spawn(function()
+    while true do
+        task.wait(1)
+        
+        local playtime = tick() - playtimeStart
+        local ph = math.floor(playtime / 3600)
+        local pm = math.floor((playtime % 3600) / 60)
+        local ps = math.floor(playtime % 60)
+        if playtimeLabel then
+            playtimeLabel.Text = string.format("Playtime: %02d:%02d:%02d", ph, pm, ps)
+        end
+        
+        local serverTime = Workspace.DistributedGameTime
+        local sh = math.floor(serverTime / 3600)
+        local sm = math.floor((serverTime % 3600) / 60)
+        local ss = math.floor(serverTime % 60)
+        if serverTimeLabel then
+            serverTimeLabel.Text = string.format("Server Age: %02d:%02d:%02d", sh, sm, ss)
+        end
+        
+        local cycleTime = serverTime % (20 * 60)
+        local inGameMinute = cycleTime
+        local fullMoonCycle = 8 * 20 * 60
+        local timeUntil = fullMoonCycle - (serverTime % fullMoonCycle)
+        if timeUntil > fullMoonCycle - 55 * 60 then
+            timeUntil = timeUntil - fullMoonCycle
+        end
+        if fullMoonLabel then
+            local fh = math.floor(timeUntil / 3600)
+            local fm = math.floor((timeUntil % 3600) / 60)
+            local fs = math.floor(timeUntil % 60)
+            fullMoonLabel.Text = string.format("Full Moon: %02d:%02d:%02d", fh, fm, fs)
+        end
+        
+        local factoryCycle = 90 * 60
+        local timeUntilFactory = factoryCycle - (serverTime % factoryCycle)
+        if factoryLabel then
+            local fah = math.floor(timeUntilFactory / 3600)
+            local fam = math.floor((timeUntilFactory % 3600) / 60)
+            local fas = math.floor(timeUntilFactory % 60)
+            factoryLabel.Text = string.format("Factory: %02d:%02d:%02d", fah, fam, fas)
+        end
+        
+        local pirateCycle = 75 * 60
+        local timeUntilPirate = pirateCycle - (serverTime % pirateCycle)
+        if pirateLabel then
+            local pah = math.floor(timeUntilPirate / 3600)
+            local pam = math.floor((timeUntilPirate % 3600) / 60)
+            local pas = math.floor(timeUntilPirate % 60)
+            pirateLabel.Text = string.format("Pirate Attack: %02d:%02d:%02d", pah, pam, pas)
+        end
+    end
+end)
+
 task.spawn(function()
     task.wait(2)
     if State.AutoFarmFruitEnabled then StartAutoFarmFruit() end
@@ -1965,6 +2088,7 @@ task.spawn(function()
     if State.PlayerESPEnabled then StartPlayerESP() end
     if State.ChamsEnabled then StartChams() end
     if State.TracersEnabled then StartTracers() end
+    if State.AutoTeamEnabled then selectTeam(SelectedTeam) end
     if State.ESPEnabled then
         for _, data in pairs(Tracked) do
             if data.Gui then data.Gui.Enabled = true end
