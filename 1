@@ -130,8 +130,6 @@ local State = {
     AutoTeamEnabled = false,
     MenuFixedState = false,
     FastAttackEnabled = false,
-    FastAttackSpeed = 1.0,
-    FastAttackRange = 1.0,
 }
 
 local function loadConfig()
@@ -141,7 +139,7 @@ local function loadConfig()
     end)
     if ok and type(data) == "table" then
         for k, v in pairs(data) do
-            if State[k] ~= nil and (type(v) == "boolean" or type(v) == "number") then
+            if State[k] ~= nil and type(v) == "boolean" then
                 State[k] = v
             end
         end
@@ -177,11 +175,12 @@ local KillAuraThread = nil
 local FullbrightThread = nil
 local RemoveFogThread = nil
 local HomeThread = nil
-
--- Fast Attack
+-- FastAttack
 local FastAttackThread = nil
 local FastAttackAnchorConn = nil
 local FastAttackLastCFrame = nil
+local FastAttackSpeed = 1.0
+local FastAttackRange = 1.0
 
 local MenuLocked = State.MenuLockedState
 local MenuFixed = State.MenuFixedState
@@ -1121,12 +1120,9 @@ local function StopRemoveFog()
     Lighting.FogStart = normalLighting.FogStart
 end
 
--- ============================================================
--- FAST ATTACK (безопасная версия, без __namecall)
--- ============================================================
+-- ================= FAST ATTACK =================
 local function StartFastAttack()
-    if State.FastAttackEnabled and FastAttackThread then return end
-    State.FastAttackEnabled = true
+    if FastAttackThread then return end
 
     FastAttackThread = task.spawn(function()
         while State.FastAttackEnabled do
@@ -1135,11 +1131,12 @@ local function StartFastAttack()
             local hrp = char and char:FindFirstChild("HumanoidRootPart")
             local tool = char and char:FindFirstChildWhichIsA("Tool")
 
-            local interval = 0.55 / math.max(State.FastAttackSpeed, 0.1)
+            local speed = FastAttackSpeed
+            if type(speed) ~= "number" or speed <= 0 then speed = 1 end
+            local interval = 0.55 / speed
             if interval < 0.03 then interval = 0.03 end
 
             if hrp and hum and hum.Health > 0 then
-                -- 1) Триггерим атаку
                 if tool then
                     pcall(function() tool:Activate() end)
                 else
@@ -1149,27 +1146,27 @@ local function StartFastAttack()
                     end)
                 end
 
-                -- 2) Останавливаем анимации атаки (визуально не воспроизводится)
                 local animator = hum:FindFirstChildOfClass("Animator")
                 if animator then
                     for _, track in ipairs(animator:GetPlayingAnimationTracks()) do
-                        local anim = track.Animation
-                        local aname = (anim and anim.Name or ""):lower()
-                        if aname:find("attack") or aname:find("swing") or aname:find("slash")
-                           or aname:find("m1") or aname:find("punch") or aname:find("kick")
-                           or aname:find("tool") or aname:find("hit") then
-                            pcall(function() track:Stop(0) end)
+                        local okName, aname = pcall(function()
+                            local a = track.Animation
+                            return (a and a.Name or ""):lower()
+                        end)
+                        if okName and type(aname) == "string" then
+                            if aname:find("attack") or aname:find("swing") or aname:find("slash")
+                               or aname:find("m1") or aname:find("punch") or aname:find("kick")
+                               or aname:find("tool") or aname:find("hit") then
+                                pcall(function() track:Stop(0) end)
+                            end
                         end
                     end
                 end
 
-                -- 3) Гасим смещение игрока от атаки
                 pcall(function()
                     hrp.AssemblyLinearVelocity = Vector3.new(0, hrp.AssemblyLinearVelocity.Y, 0)
                     hrp.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
-                    if FastAttackLastCFrame then
-                        hrp.CFrame = FastAttackLastCFrame
-                    end
+                    if FastAttackLastCFrame then hrp.CFrame = FastAttackLastCFrame end
                 end)
             end
 
@@ -1177,7 +1174,6 @@ local function StartFastAttack()
         end
     end)
 
-    -- Запоминаем позицию (для отмены смещения)
     FastAttackAnchorConn = RunService.Heartbeat:Connect(function()
         if not State.FastAttackEnabled then return end
         local char = LocalPlayer.Character
@@ -1198,7 +1194,7 @@ local function StopFastAttack()
     end
     FastAttackLastCFrame = nil
 end
--- ============================================================
+-- ================= /FAST ATTACK =================
 
 local PlayerESPTable = {}
 
@@ -2011,13 +2007,11 @@ CreateSection(MiscPage, "Fast Attack")
 CreateToggle(MiscPage, "Fast Attack", "FastAttackEnabled", function(s)
     if s then StartFastAttack() else StopFastAttack() end
 end)
-CreateSlider(MiscPage, "Attack Speed", 1, 50, math.floor((State.FastAttackSpeed or 1.0) * 10), function(value)
-    State.FastAttackSpeed = value / 10
-    saveConfig()
+CreateSlider(MiscPage, "Attack Speed", 1, 50, 10, function(value)
+    FastAttackSpeed = value / 10
 end)
-CreateSlider(MiscPage, "Attack Range", 1, 50, math.floor((State.FastAttackRange or 1.0) * 10), function(value)
-    State.FastAttackRange = value / 10
-    saveConfig()
+CreateSlider(MiscPage, "Attack Range", 1, 50, 10, function(value)
+    FastAttackRange = value / 10
 end)
 
 local RaidsPage = CreateTab("Raids")
