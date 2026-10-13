@@ -28,7 +28,7 @@ local CONFIG = {
     Text = Color3.fromRGB(255, 255, 255),
     TextDim = Color3.fromRGB(180, 180, 190),
     FruitColor = Color3.fromRGB(255, 60, 60),
-    FlySpeed = 100,
+    FlySpeed = 210,
     ReachDistance = 3,
     PlaceId = 2753915549,
     ServerHopDelay = 2,
@@ -129,7 +129,6 @@ local State = {
     MenuLockedState = false,
     AutoTeamEnabled = false,
     MenuFixedState = false,
-    ShowFPSEnabled = false,
 }
 
 local function loadConfig()
@@ -189,10 +188,14 @@ local SelectedTeam = "Marines"
 
 local playtimeStart = tick()
 
+-- ============================================================
+-- ТРЕКИНГ АПТАЙМА СЕРВЕРА (надёжный, с fallback)
+-- ============================================================
 local ServerRefValue = 0
 local ServerRefTick = tick()
 local ServerRefValid = false
 
+-- Фоновый поток: постоянно отслеживаем максимальное DistributedGameTime
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -207,10 +210,12 @@ end)
 
 local function GetServerAge()
     if not ServerRefValid then
+        -- Если DistributedGameTime вообще недоступен — используем playtime
         return tick() - playtimeStart
     end
     return ServerRefValue + (tick() - ServerRefTick)
 end
+-- ============================================================
 
 local NOCLIP_GROUP = "WindHaserNoclip"
 pcall(function() PhysicsService:RegisterCollisionGroup(NOCLIP_GROUP) end)
@@ -664,11 +669,11 @@ oldIndex = hookmetamethod(game, "__index", newcclosure(function(self, key)
                         else
                             return part
                         end
-                    }
-                }
-            }
-        }
-    }
+                    end
+                end
+            end
+        end
+    end
     return oldIndex(self, key)
 end))
 
@@ -690,11 +695,11 @@ local function FindBoss()
                     if hrp then
                         local dist = (hrp.Position - myPos).Magnitude
                         if dist < nearestDist then nearestDist = dist; nearest = hrp end
-                    }
-                }
-            }
-        }
-    }
+                    end
+                end
+            end
+        end
+    end
     return nearest
 end
 
@@ -707,7 +712,7 @@ local function StartAutoBossFarm()
             if boss then
                 if LocalPlayer.Character and LocalPlayer.Character.HumanoidRootPart.CollisionGroup ~= NOCLIP_GROUP then
                     EnableNoclip()
-                }
+                end
                 local char = LocalPlayer.Character
                 local hrp = char and char:FindFirstChild("HumanoidRootPart")
                 if hrp then
@@ -715,7 +720,7 @@ local function StartAutoBossFarm()
                         local bv = Instance.new("BodyVelocity")
                         bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
                         bv.Parent = hrp
-                    }
+                    end
                     local bv = hrp:FindFirstChildOfClass("BodyVelocity")
                     local dir = boss.Position - hrp.Position
                     if dir.Magnitude > 5 then
@@ -727,19 +732,19 @@ local function StartAutoBossFarm()
                                 VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
                                 task.wait(0.05)
                                 VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
-                            })
-                        }
-                    }
-                else
-                    DisableNoclip()
-                    local char = LocalPlayer.Character
-                    local hrp = char and char:FindFirstChild("HumanoidRootPart")
-                    if hrp then
-                        local bv = hrp:FindFirstChildOfClass("BodyVelocity")
-                        if bv then bv:Destroy() end
-                    }
-                }
-            }
+                            end)
+                        end
+                    end
+                end
+            else
+                DisableNoclip()
+                local char = LocalPlayer.Character
+                local hrp = char and char:FindFirstChild("HumanoidRootPart")
+                if hrp then
+                    local bv = hrp:FindFirstChildOfClass("BodyVelocity")
+                    if bv then bv:Destroy() end
+                end
+            end
         end
     end)
 end
@@ -764,13 +769,13 @@ local function StartAutoMastery()
                         if hrp then
                             local dist = (hrp.Position - myPos).Magnitude
                             if dist < nearestDist then nearestDist = dist; nearestNpc = hrp end
-                        }
-                    }
-                }
+                        end
+                    end
+                end
                 if nearestNpc then
                     if LocalPlayer.Character and LocalPlayer.Character.HumanoidRootPart.CollisionGroup ~= NOCLIP_GROUP then
                         EnableNoclip()
-                    }
+                    end
                     local char = LocalPlayer.Character
                     local hrp = char and char:FindFirstChild("HumanoidRootPart")
                     if hrp then
@@ -783,12 +788,12 @@ local function StartAutoMastery()
                                     VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
                                     task.wait(0.05)
                                     VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
-                                })
-                            }
-                        }
-                    }
-                }
-            }
+                                end)
+                            end
+                        end
+                    end
+                end
+            end
         end
     end)
 end
@@ -815,10 +820,6 @@ local function StopAutoQuest()
     if AutoQuestThread then task.cancel(AutoQuestThread); AutoQuestThread = nil end
 end
 
-Ниже представлена полная оставшаяся часть скрипта, начиная с функции StartAutoFarmLevel и до самого конца файла. Этот код корректно закрывает все функции, содержит исправленный цикл уведомлений о фруктах и финальные подключения событий.
-
-lua
-Копировать
 local function StartAutoFarmLevel()
     if AutoFarmLevelThread then return end
     AutoFarmLevelThread = task.spawn(function()
@@ -832,10 +833,7 @@ local function StartAutoFarmLevel()
                         local hrp = inst:FindFirstChild("HumanoidRootPart")
                         if hrp then
                             local dist = (hrp.Position - myPos).Magnitude
-                            if dist < nearestDist then 
-                                nearestDist = dist 
-                                nearestMob = hrp 
-                            end
+                            if dist < nearestDist then nearestDist = dist; nearestMob = hrp end
                         end
                     end
                 end
@@ -1583,10 +1581,6 @@ local function CreateTab(name)
     return Page
 end
 
-Вот полная оставшаяся часть скрипта, начиная с функции CreateToggle и до самого конца. Этот код завершает создание интерфейса, логику уведомлений о фруктах и все необходимые подключения событий.
-
-lua
-Копировать
 local function CreateToggle(parent, text, stateKey, callback)
     local state = State[stateKey] or false
     local ToggleFrame = Instance.new("Frame")
@@ -2043,7 +2037,7 @@ UserInputService.InputChanged:Connect(function(input)
         local d = input.Position - ds
         ToggleBtn.Position = UDim2.new(dsp.X.Scale, dsp.X.Offset + d.X, dsp.Y.Scale, dsp.Y.Offset + d.Y)
     end
-    if df and (input.UserInputType == Enum.UserInputType.MouseMovement или input.UserInputType == Enum.UserInputType.Touch) then
+    if df and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
         local d = input.Position - dfsp
         MainFrame.Position = UDim2.new(dfspos.X.Scale, dfspos.X.Offset + d.X, dfspos.Y.Scale, dfspos.Y.Offset + d.Y)
     end
@@ -2083,7 +2077,7 @@ LocalPlayer.CharacterAdded:Connect(function()
     if not State.FlyEnabled and not State.AutoFarmFruitEnabled then DisableNoclip() end
 end)
 
--- === HOME THREAD с надёжным Server Age и уведомлениями о фруктах ===
+-- === HOME THREAD с надёжным Server Age ===
 HomeThread = task.spawn(function()
     while true do
         task.wait(1)
@@ -2095,7 +2089,7 @@ HomeThread = task.spawn(function()
         local ps = math.floor(playtime % 60)
         if playtimeLabel then playtimeLabel.Text = string.format("Playtime: %02d:%02d:%02d", ph, pm, ps) end
 
-        -- Server Age
+        -- Server Age = максимальный DistributedGameTime + прошедшее время
         local serverTime = GetServerAge()
         if type(serverTime) ~= "number" or serverTime < 0 then serverTime = 0 end
 
@@ -2180,33 +2174,6 @@ task.spawn(function()
         for _, data in pairs(Tracked) do
             if data.Gui then data.Gui.Enabled = true end
             if data.Highlight then data.Highlight.Enabled = true end
-        end
-    end
-end)
-
--- === ЦИКЛ УВЕДОМЛЕНИЙ О ФРУКТАХ (вместо старого ScanFruits) ===
-task.spawn(function()
-    while task.wait(1) do
-        ScanFruits()
-        for inst, data in pairs(Tracked) do
-            if not inst.Parent or not data.Adornee or not data.Adornee.Parent then RemoveFruit(inst) end
-        end
-
-        local availableFruits = {}
-        for _, data in pairs(Tracked) do
-            if data.Adornee and data.Adornee.Parent then
-                table.insert(availableFruits, data.Name)
-            end
-        end
-
-        ClearFruitNotifications()
-
-        if #availableFruits == 0 then
-            ShowFruitNotification("No fruit on server")
-        else
-            for _, name in ipairs(availableFruits) do
-                ShowFruitNotification(name)
-            end
         end
     end
 end)
